@@ -1,0 +1,623 @@
+<!doctype html>
+<html lang="zh-Hant-TW">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="枕邊朗讀">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="theme-color" content="#fff5f7">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icon-180.png">
+<style>:root{color-scheme:light;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);box-sizing:border-box}body{margin:0}</style>
+<title>枕邊朗讀器</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<style>
+/* Layout: one-screen phone app — header, chapter card, scrolling text, control dock at the bottom */
+:root{
+  --bg:#fff5f7; --surface:#ffffff; --ink:#3e2a33; --muted:#8c6f7c;
+  --accent:#d9577a; --accent-ink:#ffffff; --soft:#fde4eb; --line:#f2d2dc; --hl:#ffe9a8;
+  --f-read:"LXGW WenKai TC","PingFang TC","Heiti TC","Noto Sans TC",serif;
+  --f-ui:-apple-system,BlinkMacSystemFont,"PingFang TC","Noto Sans TC","Microsoft JhengHei",sans-serif;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#1e1519; --surface:#2a1e24; --ink:#f5e8ed; --muted:#b499a6;
+  --accent:#f08aa6; --accent-ink:#2a1219; --soft:#3c2530; --line:#40303a; --hl:#5a4520; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#1e1519; --surface:#2a1e24; --ink:#f5e8ed; --muted:#b499a6;
+  --accent:#f08aa6; --accent-ink:#2a1219; --soft:#3c2530; --line:#40303a; --hl:#5a4520; color-scheme:dark}
+[hidden]{display:none!important}
+html,body{height:100%}
+body{background:var(--bg);color:var(--ink);font-family:var(--f-ui);font-size:15px;-webkit-text-size-adjust:100%}
+button,input,select{font:inherit;color:inherit}
+button{cursor:pointer;-webkit-tap-highlight-color:transparent}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.app{height:100%;max-width:680px;margin:0 auto;display:grid;grid-template-rows:auto auto 1fr auto;padding-inline:16px;box-sizing:border-box}
+header{display:flex;align-items:center;gap:12px;padding-block:12px 8px}
+.book{flex:1;min-width:0}
+.book h1{font-family:var(--f-read);font-size:20px;margin:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.book small{color:var(--muted);font-size:12px;display:block;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pill{border:1px solid var(--line);background:var(--surface);border-radius:999px;padding:7px 14px;font-size:14px;white-space:nowrap}
+.pill.primary{background:var(--accent);color:var(--accent-ink);border-color:var(--accent);font-weight:600}
+.now{display:flex;align-items:center;gap:10px;background:var(--soft);border-radius:16px;padding:10px 12px;margin-bottom:8px}
+.now button.ch{flex:1;min-width:0;text-align:left;background:none;border:0;padding:0}
+.ch b{font-family:var(--f-read);font-size:17px;display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ch span{font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums}
+.timer-badge{font-variant-numeric:tabular-nums;font-size:13px;background:var(--surface);border-radius:999px;padding:5px 10px;color:var(--accent);font-weight:600;white-space:nowrap}
+.text{overflow-y:auto;-webkit-overflow-scrolling:touch;min-height:0;padding-block:4px 24px}
+.text p{font-family:var(--f-read);font-size:var(--fs,19px);line-height:var(--lh,1.85);margin:0;padding:6px 8px;border-radius:10px;transition:background .2s}
+.text p.cur{background:var(--hl)}
+.text p.done{color:var(--muted)}
+.text h2{font-family:var(--f-read);font-size:22px;margin:8px 8px 12px;text-wrap:balance}
+.note{font-size:12px;color:var(--muted);margin:0 8px 12px;line-height:1.6}
+.dock{border-top:1px solid var(--line);padding-block:4px calc(10px + env(safe-area-inset-bottom,0px));display:grid;gap:10px;background:var(--bg)}
+.dock .full{display:grid;gap:10px}
+.dock.collapsed .full,.dock:not(.collapsed) .mini{display:none}
+.handle{justify-self:center;display:flex;flex-direction:column;align-items:center;gap:3px;background:none;border:0;padding:4px 24px 0;color:var(--muted);font-size:11px}
+.handle i{display:block;width:38px;height:5px;border-radius:3px;background:var(--line)}
+.mini{display:flex;align-items:center;gap:12px}
+.mini .play{width:46px;height:46px}
+.mini .play svg{width:24px;height:24px}
+.miniinfo{flex:1;min-width:0;display:grid}
+.miniinfo b{font-family:var(--f-read);font-size:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.miniinfo span{font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums}
+.awake{font-size:12px;border-radius:999px;padding:4px 9px;white-space:nowrap;border:0;background:var(--surface)}
+.awake.ok{color:#3f9c6b}
+.awake.bad{color:#d0612f}
+.chips{display:flex;gap:8px;overflow-x:auto;scrollbar-width:none;align-items:center}
+.chips::-webkit-scrollbar{display:none}
+.chips .lbl{font-size:12px;color:var(--muted);white-space:nowrap;letter-spacing:.05em}
+.chip{border:1px solid var(--line);background:var(--surface);border-radius:999px;padding:6px 12px;font-size:13px;white-space:nowrap}
+.chip[aria-pressed="true"]{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
+.ctrl{display:flex;align-items:center;justify-content:space-between;gap:6px}
+.ib{width:46px;height:46px;border-radius:50%;border:0;background:transparent;display:grid;place-items:center;flex:none}
+.ib svg{width:24px;height:24px;fill:currentColor}
+.ib small{font-size:10px;color:var(--muted);display:block;margin-top:-2px}
+.play{width:62px;height:62px;background:var(--accent);color:var(--accent-ink);box-shadow:0 6px 18px -8px var(--accent)}
+.play svg{width:30px;height:30px}
+.sheet-bg{position:fixed;inset:0;background:rgba(40,15,25,.35);z-index:20;display:flex;align-items:flex-end;justify-content:center}
+.sheet{background:var(--surface);width:100%;max-width:680px;max-height:82%;border-radius:20px 20px 0 0;display:flex;flex-direction:column;padding:14px 16px calc(14px + env(safe-area-inset-bottom,0px));box-sizing:border-box}
+.sheet h3{margin:0 0 10px;font-size:16px;display:flex;justify-content:space-between;align-items:center}
+.sheet input[type=search]{width:100%;box-sizing:border-box;border:1px solid var(--line);background:var(--bg);border-radius:12px;padding:10px 12px;font-size:16px}
+.list{overflow-y:auto;margin-top:10px;min-height:0}
+.list button{display:flex;gap:10px;width:100%;text-align:left;background:none;border:0;border-bottom:1px solid var(--line);padding:11px 4px}
+.list button .n{color:var(--muted);font-variant-numeric:tabular-nums;min-width:2.6em;font-size:13px;padding-top:2px}
+.list button .t{font-family:var(--f-read);font-size:16px;min-width:0}
+.list button.on .t{color:var(--accent);font-weight:700}
+.row{display:grid;gap:6px;margin-bottom:16px}
+.row label{font-size:13px;color:var(--muted)}
+.row select{border:1px solid var(--line);background:var(--bg);border-radius:12px;padding:10px;font-size:16px}
+.row input[type=range]{width:100%;accent-color:var(--accent)}
+.hint{font-size:12px;color:var(--muted);line-height:1.7;margin:0}
+.dim{position:fixed;inset:0;background:#000;z-index:30;display:flex;align-items:flex-end;justify-content:center;padding-bottom:calc(40px + env(safe-area-inset-bottom,0px));color:#5a4a50;font-size:13px;text-align:center;line-height:1.8}
+.toast{position:fixed;left:50%;top:calc(14px + env(safe-area-inset-top,0px));transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:9px 16px;border-radius:999px;font-size:13px;z-index:40;max-width:88%;text-align:center}
+/* Reader paper themes (chosen in the Aa panel) override the system theme */
+:root[data-paper="white"]{--bg:#ffffff;--surface:#f6f1f3;--ink:#1d1d1f;--muted:#86868b;--accent:#d9577a;--accent-ink:#fff;--soft:#f7edf1;--line:#e9dfe3;--hl:#ffeaa0;color-scheme:light}
+:root[data-paper="cream"]{--bg:#f7efe0;--surface:#fffaf0;--ink:#3b2f22;--muted:#8a7a66;--accent:#c95a6e;--accent-ink:#fff;--soft:#efe2cb;--line:#e4d5bb;--hl:#f5d98a;color-scheme:light}
+:root[data-paper="gray"]{--bg:#3a3a3c;--surface:#48484a;--ink:#e8e6e7;--muted:#a3a1a5;--accent:#f08aa6;--accent-ink:#2a1219;--soft:#47464a;--line:#545356;--hl:#6a5728;color-scheme:dark}
+:root[data-paper="black"]{--bg:#000000;--surface:#1c1c1e;--ink:#d3d1d4;--muted:#8e8e93;--accent:#f08aa6;--accent-ink:#2a1219;--soft:#1c1c1e;--line:#2c2c2e;--hl:#48391a;color-scheme:dark}
+.look h4{font-size:12px;color:var(--muted);margin:0 0 8px;font-weight:500;letter-spacing:.05em}
+.look section{margin-bottom:18px}
+.papers{display:flex;gap:14px;justify-content:space-between;align-items:center}
+.paper{flex:1;max-width:64px;aspect-ratio:1;border-radius:50%;border:2px solid var(--line);display:grid;place-items:center;font-size:18px;font-weight:700}
+.paper[aria-pressed="true"]{border-color:var(--accent);box-shadow:0 0 0 3px var(--soft)}
+.seg{display:flex;background:var(--bg);border:1px solid var(--line);border-radius:12px;padding:3px;gap:3px}
+.seg button{flex:1;border:0;background:none;border-radius:9px;padding:9px 4px;font-size:15px}
+.seg button[aria-pressed="true"]{background:var(--surface);color:var(--accent);font-weight:600;box-shadow:0 1px 3px rgba(0,0,0,.12)}
+.sizes{display:flex;align-items:center;gap:10px}
+.sizes button{flex:1;border:1px solid var(--line);background:var(--bg);border-radius:12px;padding:8px;font-weight:700}
+.sizes output{min-width:3em;text-align:center;font-variant-numeric:tabular-nums;color:var(--muted)}
+.sysbtn{background:none;border:0;color:var(--accent);font-size:13px;padding:6px 0;margin-top:6px}
+@media (prefers-reduced-motion: reduce){*{transition:none!important;scroll-behavior:auto!important}}
+</style>
+
+</head>
+<body>
+<div class="app">
+  <header>
+    <div class="book"><h1 id="bookTitle">範例文件</h1><small id="bookMeta">先點右邊「開啟檔案」選你的檔案</small></div>
+    <button class="pill primary" id="openBtn">開啟檔案</button>
+    <input type="file" id="file" hidden>
+  </header>
+
+  <div class="now">
+    <button class="ch" id="chBtn" aria-label="選擇章節"><b id="chName">—</b><span id="chPos">點這裡選章節</span></button>
+    <span class="timer-badge" id="timerBadge" hidden></span>
+    <button class="awake" id="awakeBadge" hidden></button>
+  </div>
+
+  <div class="text" id="text"></div>
+
+  <div class="dock" id="dock">
+    <button class="handle" id="dockToggle" aria-expanded="true"><i></i><span id="dockToggleTxt">收起控制列</span></button>
+    <div class="full">
+    <div class="chips" id="timerChips">
+      <span class="lbl">定時停止</span>
+      <button class="chip" data-t="0" aria-pressed="true">不限</button>
+      <button class="chip" data-t="15">15 分</button>
+      <button class="chip" data-t="30">30 分</button>
+      <button class="chip" data-t="45">45 分</button>
+      <button class="chip" data-t="60">60 分</button>
+      <button class="chip" data-t="90">90 分</button>
+      <button class="chip" data-t="ch">念完本章</button>
+    </div>
+    <div class="ctrl">
+      <button class="ib" id="prevCh" aria-label="上一章"><span><svg viewBox="0 0 24 24"><path d="M6 6h2v12H6zM9.5 12 18 18V6z"/></svg><small>上一章</small></span></button>
+      <button class="ib" id="prevP" aria-label="上一段"><span><svg viewBox="0 0 24 24"><path d="M15.4 7.4 14 6l-6 6 6 6 1.4-1.4L10.8 12z"/></svg><small>上一段</small></span></button>
+      <button class="ib play" id="playBtn" data-play aria-label="播放"><svg viewBox="0 0 24 24" class="pico"><path d="M8 5v14l11-7z"/></svg></button>
+      <button class="ib" id="nextP" aria-label="下一段"><span><svg viewBox="0 0 24 24"><path d="M8.6 16.6 10 18l6-6-6-6-1.4 1.4 4.6 4.6z"/></svg><small>下一段</small></span></button>
+      <button class="ib" id="nextCh" aria-label="下一章"><span><svg viewBox="0 0 24 24"><path d="M6 18l8.5-6L6 6v12zM16 6h2v12h-2z"/></svg><small>下一章</small></span></button>
+    </div>
+    <div class="ctrl" style="justify-content:center;gap:10px">
+      <button class="pill" id="dimBtn">熄屏聆聽</button>
+      <button class="pill" id="lookBtn">Aa 外觀</button>
+      <button class="pill" id="setBtn">語音與速度</button>
+    </div>
+      </div>
+    <div class="mini">
+      <button class="ib play" id="playMini" data-play aria-label="播放"><svg viewBox="0 0 24 24" class="pico"><path d="M8 5v14l11-7z"/></svg></button>
+      <div class="miniinfo"><b id="miniCh">—</b><span id="miniStat">已暫停</span></div>
+    </div>
+  </div>
+</div>
+
+<div class="sheet-bg" id="chSheet" hidden>
+  <div class="sheet" role="dialog" aria-label="章節目錄">
+    <h3><span id="chCount">目錄</span><button class="pill" data-close>關閉</button></h3>
+    <input type="search" id="chSearch" placeholder="輸入章號或關鍵字，例如 145" inputmode="search">
+    <div class="list" id="chList"></div>
+  </div>
+</div>
+
+<div class="sheet-bg" id="setSheet" hidden>
+  <div class="sheet" role="dialog" aria-label="語音與速度">
+    <h3><span>語音與速度</span><button class="pill" data-close>完成</button></h3>
+    <div class="row"><label for="voice">語音</label><select id="voice"></select></div>
+    <div class="row"><label for="rate">語速 <b id="rateVal">1.0</b>×</label><input type="range" id="rate" min="0.6" max="1.8" step="0.1" value="1"></div>
+    <p class="hint">想要更自然的聲音：iPhone 設定 → 輔助使用 → 朗讀內容 → 聲音 → 中文（台灣），下載「增強版」語音，回來重新整理這頁就會出現在清單裡。</p>
+  </div>
+</div>
+
+<div class="sheet-bg" id="lookSheet" hidden>
+  <div class="sheet look" role="dialog" aria-label="閱讀外觀">
+    <h3><span>閱讀外觀</span><button class="pill" data-close>完成</button></h3>
+    <section>
+      <h4>配色</h4>
+      <div class="papers" id="papers">
+        <button class="paper" data-p="white" aria-label="白色" style="background:#fff;color:#1d1d1f">Aa</button>
+        <button class="paper" data-p="cream" aria-label="米色" style="background:#f7efe0;color:#3b2f22">Aa</button>
+        <button class="paper" data-p="gray" aria-label="深灰" style="background:#3a3a3c;color:#e8e6e7">Aa</button>
+        <button class="paper" data-p="black" aria-label="黑色" style="background:#000;color:#d3d1d4">Aa</button>
+      </div>
+      <button class="sysbtn" id="paperAuto">跟隨系統深淺色</button>
+    </section>
+    <section>
+      <h4>字型</h4>
+      <div class="seg" id="fonts">
+        <button data-f="pingfang" style="font-family:'PingFang TC',sans-serif">蘋方</button>
+        <button data-f="serif" style="font-family:'Noto Serif TC','Songti TC',serif">明體</button>
+        <button data-f="kai" style="font-family:'LXGW WenKai TC','Kaiti TC',serif">楷體</button>
+        <button data-f="sans" style="font-family:'Noto Sans TC',sans-serif">黑體</button>
+      </div>
+    </section>
+    <section>
+      <h4>字體大小</h4>
+      <div class="sizes"><button id="fsDown" aria-label="縮小字體" style="font-size:14px">小</button><output id="fsVal">19</output><button id="fsUp" aria-label="放大字體" style="font-size:22px">大</button></div>
+    </section>
+    <section>
+      <h4>行距</h4>
+      <div class="seg" id="lhs"><button data-l="1.6">緊</button><button data-l="1.85">適中</button><button data-l="2.2">寬</button></div>
+    </section>
+  </div>
+</div>
+
+<div class="dim" id="dim" hidden><div id="dimText">朗讀中<br>點一下螢幕回到控制畫面</div></div>
+<div class="toast" id="toast" hidden></div>
+
+<script>
+const $ = s => document.querySelector(s);
+const synth = window.speechSynthesis;
+const LS = {
+  get(k){ try { return JSON.parse(localStorage.getItem('reader.'+k)); } catch(e){ return null; } },
+  set(k,v){ try { localStorage.setItem('reader.'+k, JSON.stringify(v)); return true; } catch(e){ return false; } }
+};
+
+const SAMPLE = `# 範例文件
+## 第一章 如何使用
+這是一份範例，讓你先試試看朗讀器的樣子。點上方的「開啟檔案」，從「檔案」App 選你自己的 md、txt、pdf 或 docx 檔。
+選好之後，點上方粉紅色的章節名稱，就能打開目錄。輸入章號，例如 145，就會直接找到那一章。
+## 第二章 定時停止
+在下方選 15、30、60 分鐘，時間到就會自動停止。選「念完本章」，則會在這一章念完時停下來。
+## 第三章 熄屏聆聽
+按「熄屏聆聽」會把螢幕蓋成全黑，但朗讀會繼續。點一下螢幕就能回來。時間到停止後，手機會照自動鎖定的設定休眠。`;
+
+const st = { title:'', file:'', chapters:[], ci:0, pi:0, playing:false, utt:null, gen:0,
+  timer:{mode:'0', endAt:0}, wake:null, rate:1, voiceURI:null };
+
+/* ---------- parsing ---------- */
+function decodeEntities(s){ return s.replace(/&nbsp;/g,' ').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&quot;/g,'"').replace(/&#39;/g,"'").replace(/&amp;/g,'&'); }
+function cleanLine(l){
+  l = l.replace(/^\s*>+\s?/,'').replace(/^\s*#{1,6}\s+/,'').replace(/^\s*[-*+]\s+/,'')
+       .replace(/!\[[^\]]*\]\([^)]*\)/g,'').replace(/\[([^\]]*)\]\([^)]*\)/g,'$1')
+       .replace(/(\*\*|__|`|~~)/g,'').trim();
+  if (/^[-*_=]{3,}$/.test(l)) return '';
+  return l;
+}
+function splitLong(p){
+  if (p.length <= 220) return [p];
+  const parts = p.match(/[^。！？!?；]*[。！？!?；]+[」』”’）)]*|[^。！？!?；]+$/g) || [p];
+  const out = []; let buf = '';
+  for (const s of parts){ if ((buf + s).length > 220 && buf){ out.push(buf); buf = s; } else buf += s; }
+  if (buf) out.push(buf);
+  return out;
+}
+function toParas(lines){
+  const out = [];
+  for (const l of lines){ const c = cleanLine(l); if (c) out.push(...splitLong(c)); }
+  return out;
+}
+const CH_RE = /^\s*(第\s*[\d０-９零〇一二三四五六七八九十百千兩]+\s*[章回節卷集部篇]|序章|序言|楔子|引子|尾聲|後記|番外|Chapter\s+\d+)/i;
+
+function buildChapters(raw, pages){
+  let t = raw.replace(/\r\n?/g,'\n');
+  if (/<summary>/i.test(t)) t = t.replace(/<summary>([\s\S]*?)<\/summary>/gi, (m,a) => '\n## ' + a.replace(/<[^>]+>/g,'').trim() + '\n');
+  t = decodeEntities(t.replace(/<[^>]+>/g,''));
+  const lines = t.split('\n');
+  let title = '';
+  const h1 = lines.find(l => /^#\s+\S/.test(l)); if (h1) title = cleanLine(h1);
+
+  // pick a heading rule
+  const counts = {};
+  for (const l of lines){ const m = l.match(/^(#{1,6})\s+\S/); if (m) counts[m[1].length] = (counts[m[1].length]||0) + 1; }
+  const lv = Object.keys(counts).map(Number).filter(k => counts[k] >= 2).sort((a,b) => counts[b]-counts[a] || a-b)[0];
+  let isHead = null;
+  if (lv) isHead = l => { const m = l.match(/^(#{1,6})\s+(.*)$/); return m && m[1].length <= lv ? cleanLine(m[2]) : null; };
+  else if (lines.filter(l => l.trim().length <= 40 && CH_RE.test(l)).length >= 2) isHead = l => (l.trim().length <= 40 && CH_RE.test(l)) ? l.trim() : null;
+
+  let chapters = [];
+  if (isHead){
+    let cur = { title:'開頭', lines:[] };
+    for (const l of lines){
+      const h = isHead(l);
+      if (h !== null){ chapters.push(cur); cur = { title:h, lines:[] }; } else cur.lines.push(l);
+    }
+    chapters.push(cur);
+    chapters = chapters.map(c => ({ title:c.title, paras:toParas(c.lines) })).filter(c => c.paras.length);
+  } else if (pages && pages.length){
+    chapters = pages.map((p,i) => ({ title:`第 ${i+1} 頁`, paras:toParas(p.split('\n')) })).filter(c => c.paras.length);
+  } else {
+    const all = toParas(lines); let cur = [], n = 0;
+    for (const p of all){ cur.push(p); n += p.length; if (n > 1500){ chapters.push(cur); cur = []; n = 0; } }
+    if (cur.length) chapters.push(cur);
+    chapters = chapters.map((ps,i) => ({ title:`第 ${i+1} 部分`, paras:ps }));
+  }
+  return { title, chapters };
+}
+
+function loadScript(src){ return new Promise((ok,no) => { const s = document.createElement('script'); s.src = src; s.onload = ok; s.onerror = () => no(new Error('無法載入 ' + src)); document.head.appendChild(s); }); }
+async function readPdf(buf){
+  const base = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/';
+  if (!window.pdfjsLib){ await loadScript(base + 'pdf.min.js'); await loadScript(base + 'pdf.worker.min.js'); }
+  const pdf = await pdfjsLib.getDocument({ data: buf }).promise;
+  const pages = [];
+  for (let i = 1; i <= pdf.numPages; i++){
+    const tc = await (await pdf.getPage(i)).getTextContent();
+    pages.push(tc.items.map(it => it.str + (it.hasEOL ? '\n' : '')).join(''));
+    if (i % 20 === 0) toast(`讀取 PDF… ${i}/${pdf.numPages} 頁`);
+  }
+  return pages;
+}
+async function readDocx(buf){
+  if (!window.mammoth) await loadScript('https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js');
+  return (await mammoth.extractRawText({ arrayBuffer: buf })).value;
+}
+function decodeText(buf){
+  let t = new TextDecoder('utf-8').decode(buf);
+  if ((t.match(/\uFFFD/g) || []).length > 20){ try { t = new TextDecoder('big5').decode(buf); } catch(e){} }
+  return t;
+}
+
+async function openFile(f){
+  stop();
+  const name = f.name, ext = (name.split('.').pop() || '').toLowerCase();
+  toast('讀取中…');
+  try {
+    const buf = await f.arrayBuffer();
+    let raw = '', pages = null;
+    if (ext === 'pdf'){ pages = await readPdf(buf); raw = pages.join('\n'); }
+    else if (ext === 'docx'){ raw = await readDocx(buf); }
+    else if (ext === 'doc'){ toast('舊版 .doc 無法讀取，請先在 Pages 或 Word 另存成 .docx 或 PDF'); return; }
+    else raw = decodeText(buf);
+    const r = buildChapters(raw, pages);
+    if (!r.chapters.length){ toast('這個檔案讀不到文字（可能是掃描圖片型 PDF）'); return; }
+    const pos = (LS.get('pos') || {})[name] || { ci:0, pi:0 };
+    setBook(name, r, pos);
+    const stored = LS.set('book', { name, raw, pages, ext });
+    toast(`已載入 ${r.chapters.length} 章` + (stored ? '' : '（檔案太大，下次需重新開啟）'));
+  } catch(e){ toast('讀取失敗：' + e.message); }
+}
+
+function setBook(name, r, pos){
+  st.file = name; st.chapters = r.chapters;
+  st.title = r.title || name.replace(/\.[^.]+$/,'');
+  st.ci = Math.min(pos.ci || 0, st.chapters.length - 1);
+  st.pi = Math.min(pos.pi || 0, st.chapters[st.ci].paras.length - 1);
+  $('#bookTitle').textContent = st.title;
+  $('#bookMeta').textContent = name ? `${name}・共 ${st.chapters.length} 章` : '先點右邊「開啟檔案」選你的檔案';
+  renderChapter(true);
+}
+
+/* ---------- render ---------- */
+function renderChapter(scroll){
+  const ch = st.chapters[st.ci], box = $('#text');
+  box.innerHTML = '';
+  const h = document.createElement('h2'); h.textContent = ch.title; box.appendChild(h);
+  if (!st.file){ const n = document.createElement('p'); n.className = 'note'; n.textContent = '範例：點任一段文字就會從那裡開始念。'; box.appendChild(n); }
+  const frag = document.createDocumentFragment();
+  ch.paras.forEach((p,i) => { const el = document.createElement('p'); el.textContent = p; el.dataset.i = i; frag.appendChild(el); });
+  box.appendChild(frag);
+  updateNow(scroll);
+}
+function updateNow(scroll){
+  const ch = st.chapters[st.ci];
+  $('#chName').textContent = ch.title;
+  $('#chPos').textContent = `本章第 ${st.pi+1}/${ch.paras.length} 段・點這裡選章節`;
+  document.querySelectorAll('#text p[data-i]').forEach(el => {
+    const i = +el.dataset.i; el.classList.toggle('cur', i === st.pi); el.classList.toggle('done', i < st.pi);
+  });
+  if (scroll){ const el = document.querySelector(`#text p[data-i="${st.pi}"]`); if (el) el.scrollIntoView({ block:'center', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' }); }
+  savePos(); updateMini();
+}
+function savePos(){ if (!st.file) return; const all = LS.get('pos') || {}; all[st.file] = { ci:st.ci, pi:st.pi }; LS.set('pos', all); }
+
+/* ---------- speech ---------- */
+function pickVoice(){
+  const vs = synth.getVoices();
+  return vs.find(v => v.voiceURI === st.voiceURI) || vs.find(v => v.lang === 'zh-TW') || vs.find(v => /^zh/i.test(v.lang)) || null;
+}
+function speakCurrent(){
+  if (!st.playing) return;
+  const ch = st.chapters[st.ci];
+  if (st.pi >= ch.paras.length){
+    if (st.timer.mode === 'ch'){ stop('本章念完，已停止'); return; }
+    if (st.ci + 1 >= st.chapters.length){ stop('全部念完了'); return; }
+    st.ci++; st.pi = 0; renderChapter(false);
+  }
+  if (timeUp()) return;
+  updateNow(true);
+  const gen = ++st.gen;
+  const u = new SpeechSynthesisUtterance(st.chapters[st.ci].paras[st.pi]);
+  const v = pickVoice(); if (v){ u.voice = v; u.lang = v.lang; } else u.lang = 'zh-TW';
+  u.rate = st.rate;
+  u.onend = () => { if (gen !== st.gen || !st.playing) return; st.pi++; speakCurrent(); };
+  u.onerror = e => { if (gen !== st.gen || !st.playing) return; if (e.error === 'interrupted' || e.error === 'canceled') return; st.pi++; speakCurrent(); };
+  st.utt = u; // keep a reference so iOS doesn't drop onend
+  synth.speak(u);
+}
+function play(){
+  if (!synth){ toast('這個瀏覽器不支援語音朗讀'); return; }
+  st.playing = true; setPlayIcon();
+  if (st.timer.mode !== '0' && st.timer.mode !== 'ch' && !st.timer.endAt) armTimer(st.timer.mode);
+  keepAwake(true);
+  synth.cancel(); st.gen++;
+  setTimeout(speakCurrent, 60);
+}
+function pause(){ st.playing = false; st.gen++; synth && synth.cancel(); setPlayIcon(); keepAwake(false); }
+function stop(msg){
+  const was = st.playing; pause(); disarmTimer(); hideDim();
+  if (msg && was) toast(msg);
+}
+function jump(ci, pi){
+  const was = st.playing; if (was){ st.gen++; synth.cancel(); }
+  const chChanged = ci !== st.ci; st.ci = ci; st.pi = Math.max(0, pi);
+  if (chChanged) renderChapter(true); else updateNow(true);
+  if (was) setTimeout(speakCurrent, 60);
+}
+function setPlayIcon(){
+  document.querySelectorAll('.pico').forEach(i => i.innerHTML = st.playing ? '<path d="M7 5h4v14H7zM13 5h4v14h-4z"/>' : '<path d="M8 5v14l11-7z"/>');
+  document.querySelectorAll('[data-play]').forEach(b => b.setAttribute('aria-label', st.playing ? '暫停' : '播放'));
+  updateMini();
+}
+
+/* ---------- timer ---------- */
+let tick = null;
+function armTimer(mode){
+  st.timer.mode = mode;
+  st.timer.endAt = (mode !== '0' && mode !== 'ch') ? Date.now() + (+mode) * 60000 : 0;
+  clearInterval(tick); tick = setInterval(timerTick, 1000); timerTick();
+}
+function disarmTimer(){
+  st.timer.endAt = 0; clearInterval(tick); tick = null;
+  if (st.timer.mode !== 'ch' && st.timer.mode !== '0'){ /* keep chosen chip so the next play re-arms it */ }
+  timerTick();
+}
+function timeUp(){ if (st.timer.endAt && Date.now() >= st.timer.endAt){ stop('時間到，已停止朗讀'); return true; } return false; }
+function timerTick(){
+  updateMini();
+  const b = $('#timerBadge');
+  if (st.timer.endAt){
+    const left = Math.max(0, st.timer.endAt - Date.now());
+    const m = Math.floor(left/60000), s = Math.floor(left/1000) % 60;
+    b.textContent = `剩 ${m}:${String(s).padStart(2,'0')}`; b.hidden = false;
+    $('#dimText').innerHTML = `朗讀中・剩 ${m} 分 ${String(s).padStart(2,'0')} 秒<br>點一下螢幕回到控制畫面`;
+    if (st.playing && left <= 0) timeUp();
+  } else if (st.timer.mode === 'ch'){ b.textContent = '念完本章停'; b.hidden = false; $('#dimText').innerHTML = '朗讀中・念完本章就停<br>點一下螢幕回到控制畫面'; }
+  else { b.hidden = true; $('#dimText').innerHTML = '朗讀中<br>點一下螢幕回到控制畫面'; }
+}
+
+/* ---------- screen wake ---------- */
+/* iOS often refuses the Wake Lock API (especially inside an embedded page),
+   so a tiny silent looping video also plays while reading: iOS does not auto-lock during video playback. */
+const AWAKE_MP4 = 'data:video/mp4;base64,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';
+let awakeVid = null;
+function awakeVideo(on){
+  try {
+    if (on){
+      if (!awakeVid){
+        awakeVid = document.createElement('video');
+        awakeVid.setAttribute('playsinline',''); awakeVid.setAttribute('webkit-playsinline',''); awakeVid.setAttribute('muted','');
+        awakeVid.muted = true; awakeVid.loop = true; awakeVid.src = AWAKE_MP4;
+        awakeVid.style.cssText = 'position:fixed;width:1px;height:1px;opacity:0.01;pointer-events:none;left:0;bottom:0';
+        document.body.appendChild(awakeVid);
+      }
+      const pr = awakeVid.play(); if (pr && pr.catch) pr.catch(() => {});
+    } else if (awakeVid) awakeVid.pause();
+  } catch(e){}
+}
+let awakeCheckT = null;
+function showAwake(){
+  const b = $('#awakeBadge');
+  if (!st.playing){ b.hidden = true; return; }
+  const vidOk = awakeVid && !awakeVid.paused && awakeVid.currentTime > 0;
+  b.hidden = false;
+  if (st.wake){ b.className = 'awake ok'; b.textContent = '✓ 螢幕常亮'; b.dataset.msg = '已啟用螢幕常亮，朗讀時螢幕不會自動關閉。'; }
+  else if (vidOk){ b.className = 'awake ok'; b.textContent = '✓ 常亮(備援)'; b.dataset.msg = '已用備援方式保持螢幕常亮；如果螢幕還是會關，請改用 Safari 開啟。'; }
+  else { b.className = 'awake bad'; b.textContent = '⚠ 螢幕會關'; b.dataset.msg = '這裡不允許保持螢幕常亮（常見於 Claude App 內）。請改用 Safari 開啟，或安裝離線版並加入主畫面。'; }
+}
+$('#awakeBadge').onclick = e => toast(e.currentTarget.dataset.msg || '');
+function keepAwake(on){
+  clearTimeout(awakeCheckT); awakeCheckT = setTimeout(showAwake, 1500);
+  awakeVideo(on); // must run inside the tap, before any await
+  (async () => {
+    try {
+      if (on && !st.wake && navigator.wakeLock){ st.wake = await navigator.wakeLock.request('screen'); st.wake.addEventListener('release', () => { st.wake = null; }); }
+      if (!on && st.wake){ await st.wake.release(); st.wake = null; }
+    } catch(e){ st.wake = null; }
+  })();
+}
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible'){ if (st.playing) keepAwake(true); timeUp(); timerTick(); } });
+function hideDim(){ $('#dim').hidden = true; }
+
+/* ---------- UI wiring ---------- */
+let toastT;
+function toast(m){ const t = $('#toast'); t.textContent = m; t.hidden = false; clearTimeout(toastT); toastT = setTimeout(() => t.hidden = true, 2800); }
+
+$('#openBtn').onclick = () => $('#file').click();
+$('#file').onchange = e => { const f = e.target.files[0]; if (f) openFile(f); e.target.value = ''; };
+document.querySelectorAll('[data-play]').forEach(b => b.onclick = () => st.playing ? pause() : play());
+function setDock(collapsed){
+  $('#dock').classList.toggle('collapsed', collapsed);
+  $('#dockToggle').setAttribute('aria-expanded', !collapsed);
+  $('#dockToggleTxt').textContent = collapsed ? '展開控制列' : '收起控制列';
+  LS.set('dockCollapsed', collapsed); updateMini();
+}
+$('#dockToggle').onclick = () => setDock(!$('#dock').classList.contains('collapsed'));
+function updateMini(){
+  const ch = st.chapters[st.ci]; if (!ch) return;
+  $('#miniCh').textContent = ch.title;
+  let t = st.playing ? '朗讀中' : '已暫停';
+  if (st.timer.endAt){ const left = Math.max(0, st.timer.endAt - Date.now()); t += `・剩 ${Math.floor(left/60000)}:${String(Math.floor(left/1000)%60).padStart(2,'0')}`; }
+  else if (st.timer.mode === 'ch') t += '・念完本章停';
+  else if (st.timer.mode !== '0') t += `・播放後 ${st.timer.mode} 分鐘停`;
+  $('#miniStat').textContent = t;
+}
+$('#prevP').onclick = () => { if (st.pi > 0) jump(st.ci, st.pi - 1); else if (st.ci > 0) jump(st.ci - 1, st.chapters[st.ci-1].paras.length - 1); };
+$('#nextP').onclick = () => { if (st.pi + 1 < st.chapters[st.ci].paras.length) jump(st.ci, st.pi + 1); else if (st.ci + 1 < st.chapters.length) jump(st.ci + 1, 0); };
+$('#prevCh').onclick = () => jump(Math.max(0, st.pi > 0 ? st.ci : st.ci - 1), 0);
+$('#nextCh').onclick = () => { if (st.ci + 1 < st.chapters.length) jump(st.ci + 1, 0); };
+$('#text').onclick = e => { const p = e.target.closest('p[data-i]'); if (!p) return; jump(st.ci, +p.dataset.i); if (!st.playing) play(); };
+
+$('#timerChips').onclick = e => {
+  const c = e.target.closest('.chip'); if (!c) return;
+  document.querySelectorAll('#timerChips .chip').forEach(x => x.setAttribute('aria-pressed', x === c));
+  const mode = c.dataset.t;
+  if (st.playing) armTimer(mode); else { st.timer.mode = mode; st.timer.endAt = 0; timerTick(); }
+  LS.set('timer', mode);
+  if (mode !== '0') toast(mode === 'ch' ? '這一章念完就停止' : `按播放後 ${mode} 分鐘自動停止`);
+};
+
+function openSheet(id){ $(id).hidden = false; }
+document.querySelectorAll('.sheet-bg').forEach(bg => bg.addEventListener('click', e => { if (e.target === bg || e.target.hasAttribute('data-close')) bg.hidden = true; }));
+
+function renderList(q){
+  q = (q || '').trim();
+  const list = $('#chList'); list.innerHTML = '';
+  const num = /^\d+$/.test(q) ? +q : null;
+  const frag = document.createDocumentFragment();
+  let first = null;
+  const anyTitle = q && st.chapters.some(c => c.title.includes(q));
+  st.chapters.forEach((c,i) => {
+    if (q && !(anyTitle ? c.title.includes(q) : num === i + 1)) return;
+    const b = document.createElement('button'); b.className = i === st.ci ? 'on' : '';
+    const own = /^\s*(\d|第)/.test(c.title);
+    b.innerHTML = `<span class="n">${own ? '' : i+1}</span><span class="t"></span>`; b.querySelector('.t').textContent = c.title;
+    b.onclick = () => { $('#chSheet').hidden = true; jump(i, 0); };
+    frag.appendChild(b); if (!first) first = b;
+  });
+  list.appendChild(frag);
+  $('#chCount').textContent = `目錄・${st.chapters.length} 章`;
+  return first;
+}
+$('#chBtn').onclick = () => { $('#chSearch').value = ''; renderList(''); openSheet('#chSheet'); const on = $('#chList .on'); if (on) on.scrollIntoView({ block:'center' }); };
+$('#chSearch').oninput = e => renderList(e.target.value);
+$('#chSearch').onkeydown = e => { if (e.key === 'Enter'){ const f = $('#chList button'); if (f) f.click(); } };
+
+$('#setBtn').onclick = () => { fillVoices(); openSheet('#setSheet'); };
+function fillVoices(){
+  const sel = $('#voice'); const vs = synth ? synth.getVoices() : [];
+  let zh = vs.filter(v => /^zh/i.test(v.lang)); if (!zh.length) zh = vs;
+  zh.sort((a,b) => (b.lang === 'zh-TW') - (a.lang === 'zh-TW'));
+  const cur = pickVoice();
+  sel.innerHTML = zh.length ? '' : '<option>（系統預設）</option>';
+  zh.forEach(v => { const o = document.createElement('option'); o.value = v.voiceURI; o.textContent = `${v.name}（${v.lang}）`; if (cur && v.voiceURI === cur.voiceURI) o.selected = true; sel.appendChild(o); });
+}
+$('#voice').onchange = e => { st.voiceURI = e.target.value; LS.set('voice', st.voiceURI); };
+$('#rate').oninput = e => { st.rate = +e.target.value; $('#rateVal').textContent = st.rate.toFixed(1); LS.set('rate', st.rate); };
+/* ---------- appearance (Aa) ---------- */
+const FONTS = {
+  pingfang:{ css:'-apple-system,"PingFang TC","Noto Sans TC",sans-serif' },
+  serif:{ css:'"Noto Serif TC","Songti TC",serif', gf:'Noto+Serif+TC:wght@400;700' },
+  kai:{ css:'"LXGW WenKai TC","Kaiti TC","PingFang TC",serif', gf:'LXGW+WenKai+TC:wght@400;700' },
+  sans:{ css:'"Noto Sans TC","PingFang TC",sans-serif', gf:'Noto+Sans+TC:wght@400;700' }
+};
+const look = { paper:null, font:'kai', fs:19, lh:1.85 };
+function applyLook(){
+  const R = document.documentElement;
+  if (look.paper) R.dataset.paper = look.paper; else delete R.dataset.paper;
+  const f = FONTS[look.font] || FONTS.kai;
+  if (f.gf && !document.getElementById('gf-' + look.font)){
+    const l = document.createElement('link'); l.id = 'gf-' + look.font; l.rel = 'stylesheet';
+    l.href = `https://fonts.googleapis.com/css2?family=${f.gf}&display=swap`; document.head.appendChild(l);
+  }
+  R.style.setProperty('--f-read', f.css);
+  R.style.setProperty('--fs', look.fs + 'px');
+  R.style.setProperty('--lh', look.lh);
+  $('#fsVal').textContent = look.fs;
+  document.querySelectorAll('#papers .paper').forEach(b => b.setAttribute('aria-pressed', b.dataset.p === look.paper));
+  document.querySelectorAll('#fonts button').forEach(b => b.setAttribute('aria-pressed', b.dataset.f === look.font));
+  document.querySelectorAll('#lhs button').forEach(b => b.setAttribute('aria-pressed', +b.dataset.l === look.lh));
+  $('#paperAuto').hidden = !look.paper;
+  LS.set('look', look);
+}
+$('#lookBtn').onclick = () => openSheet('#lookSheet');
+$('#papers').onclick = e => { const b = e.target.closest('.paper'); if (b){ look.paper = b.dataset.p; applyLook(); } };
+$('#paperAuto').onclick = () => { look.paper = null; applyLook(); };
+$('#fonts').onclick = e => { const b = e.target.closest('button'); if (b){ look.font = b.dataset.f; applyLook(); } };
+$('#lhs').onclick = e => { const b = e.target.closest('button'); if (b){ look.lh = +b.dataset.l; applyLook(); } };
+$('#fsDown').onclick = () => { look.fs = Math.max(14, look.fs - 1); applyLook(); };
+$('#fsUp').onclick = () => { look.fs = Math.min(34, look.fs + 1); applyLook(); };
+if (synth) synth.onvoiceschanged = () => { if (!$('#setSheet').hidden) fillVoices(); };
+
+$('#dimBtn').onclick = () => { if (!st.playing) play(); $('#dim').hidden = false; timerTick(); };
+$('#dim').onclick = hideDim;
+
+/* ---------- boot ---------- */
+(function boot(){
+  const r = LS.get('rate'); if (r){ st.rate = r; $('#rate').value = r; $('#rateVal').textContent = (+r).toFixed(1); }
+  Object.assign(look, LS.get('look') || {}); const oldFs = LS.get('fs'); if (oldFs && !LS.get('look')) look.fs = oldFs; applyLook();
+  st.voiceURI = LS.get('voice');
+  if (LS.get('dockCollapsed')) setDock(true);
+  const tm = LS.get('timer'); if (tm){ st.timer.mode = tm; document.querySelectorAll('#timerChips .chip').forEach(x => x.setAttribute('aria-pressed', x.dataset.t === tm)); timerTick(); }
+  const b = LS.get('book');
+  if (b && b.raw){
+    const res = buildChapters(b.raw, b.pages);
+    if (res.chapters.length){ setBook(b.name, res, (LS.get('pos') || {})[b.name] || {}); toast(`接續上次：${st.chapters[st.ci].title}`); return; }
+  }
+  setBook('', buildChapters(SAMPLE), { ci:0, pi:0 });
+})();
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
+</script>
+</body>
+</html>
