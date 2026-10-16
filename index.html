@@ -50,10 +50,38 @@ header{display:flex;align-items:center;gap:12px;padding-block:12px 8px}
 .text p{font-family:var(--f-read);font-size:var(--fs,19px);line-height:var(--lh,1.85);margin:0;padding:6px 8px;border-radius:10px;transition:background .2s}
 .text p.cur{background:var(--hl)}
 .text p.done{color:var(--muted)}
+.nohl .text p.cur{background:transparent}
+.nohl .text p.done{color:inherit}
+.custom-in{display:inline-flex;gap:6px;align-items:center}
+.custom-in input{width:4.5em;border:1px solid var(--line);background:var(--surface);border-radius:999px;padding:6px 10px;font-size:16px;text-align:center}
+.editor{position:fixed;inset:0;z-index:25;background:var(--bg);display:flex;flex-direction:column;gap:8px;padding:calc(10px + env(safe-area-inset-top,0px)) 16px calc(10px + env(safe-area-inset-bottom,0px));box-sizing:border-box}
+.editor > *{width:100%;max-width:680px;margin-inline:auto;box-sizing:border-box}
+.ed-top{display:flex;align-items:center;gap:8px}
+.ed-top b{flex:1;text-align:center;font-size:16px}
+.ed-bar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;background:var(--soft);border-radius:12px;padding:8px 10px;font-size:13px}
+.ed-bar span{flex:1;min-width:8em}
+.ed-title{border:1px solid var(--line);background:var(--surface);border-radius:12px;padding:9px 12px;font-family:var(--f-read);font-size:17px;font-weight:700}
+.ed-find{display:grid;grid-template-columns:minmax(0,1fr);gap:8px;background:var(--soft);border-radius:14px;padding:10px}
+.ed-row{display:flex;gap:6px;align-items:center}
+.ed-row input{flex:1;min-width:0;width:0;border:1px solid var(--line);background:var(--surface);border-radius:10px;padding:8px 10px;font-size:16px}
+.ed-row .pill{padding:7px 11px;font-size:13px}
+.ed-row .seg{flex:1}
+.fcount{font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums;min-width:3.6em;text-align:center}
+.fnav{width:36px;height:36px;border-radius:10px;border:1px solid var(--line);background:var(--surface);font-size:18px;line-height:1;flex:none}
+.ed-results{max-height:28vh;overflow-y:auto;background:var(--surface);border-radius:10px}
+.ed-results button{display:block;width:100%;text-align:left;background:none;border:0;border-bottom:1px solid var(--line);padding:8px 10px}
+.ed-results b{font-size:13px;display:block}
+.ed-results small{font-size:12px;color:var(--muted);display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ed-results mark{background:var(--hl);color:inherit;border-radius:3px}
+#edText{flex:1;min-height:0;resize:none;border:1px solid var(--line);background:var(--surface);border-radius:12px;padding:12px;font-family:var(--f-read);font-size:17px;line-height:1.8;color:var(--ink)}
+.ed-foot{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--muted)}
+.ed-foot span{flex:1}
 .text h2{font-family:var(--f-read);font-size:22px;margin:8px 8px 12px;text-wrap:balance}
 .note{font-size:12px;color:var(--muted);margin:0 8px 12px;line-height:1.6}
 .dock{border-top:1px solid var(--line);padding-block:4px calc(10px + env(safe-area-inset-bottom,0px));display:grid;gap:10px;background:var(--bg)}
 .dock .full{display:grid;gap:10px}
+.tools{justify-content:center;gap:8px;flex-wrap:wrap}
+.tools .pill{font-size:13px;padding:6px 11px}
 .dock.collapsed .full,.dock:not(.collapsed) .mini{display:none}
 .handle{justify-self:center;display:flex;flex-direction:column;align-items:center;gap:3px;background:none;border:0;padding:4px 24px 0;color:var(--muted);font-size:11px}
 .handle i{display:block;width:38px;height:5px;border-radius:3px;background:var(--line)}
@@ -136,6 +164,8 @@ header{display:flex;align-items:center;gap:12px;padding-block:12px 8px}
     <div class="chips" id="timerChips">
       <span class="lbl">定時停止</span>
       <button class="chip" data-t="0" aria-pressed="true">不限</button>
+      <button class="chip" data-t="custom" id="customChip">自訂</button>
+      <span class="custom-in" id="customIn" hidden><input type="number" id="customMin" inputmode="numeric" min="1" max="600" placeholder="分鐘" aria-label="自訂分鐘數"><button class="chip" id="customOk">確定</button></span>
       <button class="chip" data-t="15">15 分</button>
       <button class="chip" data-t="30">30 分</button>
       <button class="chip" data-t="45">45 分</button>
@@ -150,10 +180,11 @@ header{display:flex;align-items:center;gap:12px;padding-block:12px 8px}
       <button class="ib" id="nextP" aria-label="下一段"><span><svg viewBox="0 0 24 24"><path d="M8.6 16.6 10 18l6-6-6-6-1.4 1.4 4.6 4.6z"/></svg><small>下一段</small></span></button>
       <button class="ib" id="nextCh" aria-label="下一章"><span><svg viewBox="0 0 24 24"><path d="M6 18l8.5-6L6 6v12zM16 6h2v12h-2z"/></svg><small>下一章</small></span></button>
     </div>
-    <div class="ctrl" style="justify-content:center;gap:10px">
+    <div class="ctrl tools">
       <button class="pill" id="dimBtn">熄屏聆聽</button>
       <button class="pill" id="lookBtn">Aa 外觀</button>
       <button class="pill" id="setBtn">語音與速度</button>
+      <button class="pill" id="editBtn">✎ 編輯</button>
     </div>
       </div>
     <div class="mini">
@@ -210,7 +241,30 @@ header{display:flex;align-items:center;gap:12px;padding-block:12px 8px}
       <h4>行距</h4>
       <div class="seg" id="lhs"><button data-l="1.6">緊</button><button data-l="1.85">適中</button><button data-l="2.2">寬</button></div>
     </section>
+    <section>
+      <h4>朗讀時段落反白</h4>
+      <div class="seg" id="hls"><button data-h="1">開啟</button><button data-h="0">關閉</button></div>
+    </section>
   </div>
+</div>
+
+<div class="editor" id="editor" hidden role="dialog" aria-label="編輯本章">
+  <div class="ed-top">
+    <button class="pill" id="edBack">返回</button>
+    <b>編輯本章</b>
+    <button class="pill" id="edFindBtn" aria-pressed="false">搜尋取代</button>
+    <button class="pill primary" id="edSave">儲存</button>
+  </div>
+  <div class="ed-bar" id="edDiscard" hidden><span>有尚未儲存的修改，要放棄嗎？</span><button class="pill" id="edDiscardYes">放棄修改</button><button class="pill primary" id="edDiscardNo">繼續編輯</button></div>
+  <div class="ed-find" id="edFind" hidden>
+    <div class="ed-row"><input type="search" id="fq" placeholder="搜尋文字" aria-label="搜尋文字"><span class="fcount" id="fCount">0/0</span><button class="fnav" id="fPrev" aria-label="上一個">‹</button><button class="fnav" id="fNext" aria-label="下一個">›</button></div>
+    <div class="ed-row"><input type="text" id="fr" placeholder="取代為" aria-label="取代為"><button class="pill" id="fRep">取代</button><button class="pill" id="fRepAll">全部取代</button></div>
+    <div class="ed-row"><div class="seg" id="fScope"><button data-s="ch" aria-pressed="true">本章節</button><button data-s="all" aria-pressed="false">整個文件</button></div></div>
+    <div class="ed-results" id="fResults" hidden></div>
+  </div>
+  <input class="ed-title" id="edTitle" aria-label="章節標題">
+  <textarea id="edText" spellcheck="false" aria-label="章節內容"></textarea>
+  <div class="ed-foot"><span id="edInfo"></span><button class="pill" id="edExport">匯出整份文件 .md</button></div>
 </div>
 
 <div class="dim" id="dim" hidden><div id="dimText">朗讀中<br>點一下螢幕回到控制畫面</div></div>
@@ -519,14 +573,34 @@ $('#prevCh').onclick = () => jump(Math.max(0, st.pi > 0 ? st.ci : st.ci - 1), 0)
 $('#nextCh').onclick = () => { if (st.ci + 1 < st.chapters.length) jump(st.ci + 1, 0); };
 $('#text').onclick = e => { const p = e.target.closest('p[data-i]'); if (!p) return; jump(st.ci, +p.dataset.i); if (!st.playing) play(); };
 
-$('#timerChips').onclick = e => {
-  const c = e.target.closest('.chip'); if (!c) return;
-  document.querySelectorAll('#timerChips .chip').forEach(x => x.setAttribute('aria-pressed', x === c));
-  const mode = c.dataset.t;
+const PRESETS = ['0','15','30','45','60','90','ch'];
+function setTimerMode(mode){
+  const custom = !PRESETS.includes(mode);
+  document.querySelectorAll('#timerChips .chip[data-t]').forEach(x => x.setAttribute('aria-pressed', custom ? x.dataset.t === 'custom' : x.dataset.t === mode));
+  $('#customChip').textContent = custom ? `自訂 ${mode} 分` : '自訂';
   if (st.playing) armTimer(mode); else { st.timer.mode = mode; st.timer.endAt = 0; timerTick(); }
   LS.set('timer', mode);
+}
+$('#timerChips').onclick = e => {
+  const c = e.target.closest('.chip[data-t]'); if (!c) return;
+  if (c.dataset.t === 'custom'){
+    $('#customIn').hidden = false;
+    if (!PRESETS.includes(st.timer.mode)) $('#customMin').value = st.timer.mode;
+    $('#customMin').focus(); $('#customIn').scrollIntoView({ inline:'nearest', block:'nearest' });
+    return;
+  }
+  $('#customIn').hidden = true;
+  const mode = c.dataset.t; setTimerMode(mode);
   if (mode !== '0') toast(mode === 'ch' ? '這一章念完就停止' : `按播放後 ${mode} 分鐘自動停止`);
 };
+function confirmCustom(){
+  const n = parseInt($('#customMin').value, 10);
+  if (!(n >= 1 && n <= 600)){ toast('請輸入 1～600 之間的分鐘數'); return; }
+  $('#customIn').hidden = true; $('#customMin').blur();
+  setTimerMode(String(n)); toast(`按播放後 ${n} 分鐘自動停止`);
+}
+$('#customOk').onclick = confirmCustom;
+$('#customMin').onkeydown = e => { if (e.key === 'Enter') confirmCustom(); };
 
 function openSheet(id){ $(id).hidden = false; }
 document.querySelectorAll('.sheet-bg').forEach(bg => bg.addEventListener('click', e => { if (e.target === bg || e.target.hasAttribute('data-close')) bg.hidden = true; }));
@@ -572,7 +646,7 @@ const FONTS = {
   kai:{ css:'"LXGW WenKai TC","Kaiti TC","PingFang TC",serif', gf:'LXGW+WenKai+TC:wght@400;700' },
   sans:{ css:'"Noto Sans TC","PingFang TC",sans-serif', gf:'Noto+Sans+TC:wght@400;700' }
 };
-const look = { paper:null, font:'kai', fs:19, lh:1.85 };
+const look = { paper:null, font:'kai', fs:19, lh:1.85, hl:true };
 function applyLook(){
   const R = document.documentElement;
   if (look.paper) R.dataset.paper = look.paper; else delete R.dataset.paper;
@@ -589,6 +663,8 @@ function applyLook(){
   document.querySelectorAll('#fonts button').forEach(b => b.setAttribute('aria-pressed', b.dataset.f === look.font));
   document.querySelectorAll('#lhs button').forEach(b => b.setAttribute('aria-pressed', +b.dataset.l === look.lh));
   $('#paperAuto').hidden = !look.paper;
+  R.classList.toggle('nohl', !look.hl);
+  document.querySelectorAll('#hls button').forEach(b => b.setAttribute('aria-pressed', (b.dataset.h === '1') === look.hl));
   LS.set('look', look);
 }
 $('#lookBtn').onclick = () => openSheet('#lookSheet');
@@ -596,6 +672,7 @@ $('#papers').onclick = e => { const b = e.target.closest('.paper'); if (b){ look
 $('#paperAuto').onclick = () => { look.paper = null; applyLook(); };
 $('#fonts').onclick = e => { const b = e.target.closest('button'); if (b){ look.font = b.dataset.f; applyLook(); } };
 $('#lhs').onclick = e => { const b = e.target.closest('button'); if (b){ look.lh = +b.dataset.l; applyLook(); } };
+$('#hls').onclick = e => { const b = e.target.closest('button'); if (b){ look.hl = b.dataset.h === '1'; applyLook(); } };
 $('#fsDown').onclick = () => { look.fs = Math.max(14, look.fs - 1); applyLook(); };
 $('#fsUp').onclick = () => { look.fs = Math.min(34, look.fs + 1); applyLook(); };
 if (synth) synth.onvoiceschanged = () => { if (!$('#setSheet').hidden) fillVoices(); };
@@ -603,14 +680,161 @@ if (synth) synth.onvoiceschanged = () => { if (!$('#setSheet').hidden) fillVoice
 $('#dimBtn').onclick = () => { if (!st.playing) play(); $('#dim').hidden = false; timerTick(); };
 $('#dim').onclick = hideDim;
 
+/* ---------- editor: edit current chapter, find & replace ---------- */
+const ed = { ci:0, draft:null, orig:null, matches:[], mi:-1, scope:'ch', dirty:false };
+const chText = c => c.paras.join('\n\n');
+function textToParas(t){ const out = []; t.split('\n').forEach(l => { l = l.trim(); if (l) out.push(...splitLong(l)); }); return out; }
+function syncEd(){ const d = ed.draft && ed.draft[ed.ci]; if (d){ d.text = $('#edText').value; d.title = $('#edTitle').value; } }
+function loadEdChapter(ci){
+  ed.ci = ci; $('#edTitle').value = ed.draft[ci].title; $('#edText').value = ed.draft[ci].text; $('#edText').scrollTop = 0; updEdInfo();
+}
+function updEdInfo(){ $('#edInfo').textContent = `第 ${ed.ci+1}/${ed.draft.length} 章` + (ed.dirty ? '・尚未儲存' : ''); }
+function markDirty(){ if (!ed.dirty){ ed.dirty = true; updEdInfo(); } }
+function openEditor(){
+  if (st.playing) pause();
+  ed.draft = st.chapters.map(c => ({ title:c.title, text:chText(c) }));
+  ed.orig = ed.draft.map(d => ({ title:d.title, text:d.text }));
+  ed.dirty = false; ed.mi = -1;
+  loadEdChapter(st.ci);
+  $('#edDiscard').hidden = true; $('#editor').hidden = false;
+  refreshFind();
+}
+function closeEditor(){
+  $('#editor').hidden = true; $('#edDiscard').hidden = true;
+  if (ed.ci !== st.ci && ed.ci < st.chapters.length){ st.ci = ed.ci; st.pi = 0; }
+  st.pi = Math.min(st.pi, st.chapters[st.ci].paras.length - 1);
+  renderChapter(true);
+  ed.draft = ed.orig = null;
+}
+function saveEditor(){
+  syncEd();
+  let changed = 0;
+  ed.draft.forEach((d,i) => {
+    const o = ed.orig[i], c = st.chapters[i];
+    if (d.text === o.text && d.title === o.title) return;
+    changed++;
+    c.title = d.title.trim() || o.title;
+    c.paras = textToParas(d.text); if (!c.paras.length) c.paras = ['（本章沒有內容）'];
+    d.title = c.title; d.text = chText(c);
+    o.title = d.title; o.text = d.text;
+  });
+  ed.dirty = false;
+  $('#edTitle').value = ed.draft[ed.ci].title;
+  updEdInfo(); refreshFind();
+  if (!changed){ toast('沒有修改需要儲存'); return; }
+  const ok = LS.set('book', { name:st.file, title:st.title, chapters:st.chapters, edited:true });
+  toast(ok ? `已儲存（修改了 ${changed} 章）` : '已套用修改，但手機儲存空間不足，關閉後可能會遺失。建議先匯出檔案');
+}
+// find & replace
+function findAll(){
+  syncEd();
+  const q = $('#fq').value; ed.matches = [];
+  if (q){
+    const list = ed.scope === 'ch' ? [ed.ci] : ed.draft.map((_,i) => i);
+    for (const ci of list){ const t = ed.draft[ci].text; let i = t.indexOf(q); while (i !== -1){ ed.matches.push({ ci, i }); i = t.indexOf(q, i + q.length); } }
+  }
+}
+function updCount(){ $('#fCount').textContent = `${ed.mi >= 0 ? ed.mi + 1 : 0}/${ed.matches.length}`; }
+function renderResults(){
+  const box = $('#fResults'), q = $('#fq').value;
+  if (ed.scope !== 'all' || !q || !ed.matches.length){ box.hidden = true; box.innerHTML = ''; return; }
+  const by = new Map(); ed.matches.forEach((m,k) => { if (!by.has(m.ci)) by.set(m.ci, { k, n:0, i:m.i }); by.get(m.ci).n++; });
+  box.innerHTML = ''; const frag = document.createDocumentFragment();
+  for (const [ci, g] of by){
+    const t = ed.draft[ci].text, a = Math.max(0, g.i - 14), z = Math.min(t.length, g.i + q.length + 24);
+    const b = document.createElement('button');
+    const tt = document.createElement('b'); tt.textContent = `${ed.draft[ci].title}（${g.n} 處）`;
+    const sm = document.createElement('small');
+    sm.append(document.createTextNode((a ? '…' : '') + t.slice(a, g.i).replace(/\n+/g,' ')));
+    const mk = document.createElement('mark'); mk.textContent = q; sm.append(mk);
+    sm.append(document.createTextNode(t.slice(g.i + q.length, z).replace(/\n+/g,' ') + (z < t.length ? '…' : '')));
+    b.append(tt, sm); b.onclick = () => gotoMatch(g.k);
+    frag.appendChild(b);
+  }
+  box.appendChild(frag); box.hidden = false;
+}
+function refreshFind(){ findAll(); ed.mi = -1; updCount(); renderResults(); }
+function selectInTa(i, len){
+  const ta = $('#edText'), v = ta.value;
+  ta.value = v.slice(0, i); const h = ta.scrollHeight; ta.value = v;
+  try { ta.focus({ preventScroll:true }); } catch(e){ ta.focus(); }
+  ta.setSelectionRange(i, i + len);
+  ta.scrollTop = Math.max(0, h - ta.clientHeight / 2);
+}
+function gotoMatch(k){
+  if (!ed.matches.length){ toast('找不到符合的文字'); return; }
+  ed.mi = (k + ed.matches.length) % ed.matches.length;
+  const m = ed.matches[ed.mi];
+  if (m.ci !== ed.ci){ syncEd(); loadEdChapter(m.ci); }
+  selectInTa(m.i, $('#fq').value.length); updCount();
+}
+function replaceOne(){
+  const q = $('#fq').value, r = $('#fr').value; if (!q) return;
+  if (ed.mi < 0){ gotoMatch(0); return; }   // first tap: jump to the first match so you can see what will change
+  const m = ed.matches[ed.mi]; syncEd();
+  const d = ed.draft[m.ci];
+  if (d.text.substr(m.i, q.length) !== q){ refreshFind(); return; }
+  d.text = d.text.slice(0, m.i) + r + d.text.slice(m.i + q.length);
+  if (m.ci === ed.ci) $('#edText').value = d.text;
+  markDirty(); findAll(); renderResults();
+  const k = ed.matches.findIndex(x => x.ci > m.ci || (x.ci === m.ci && x.i >= m.i + r.length));
+  if (ed.matches.length) gotoMatch(k === -1 ? 0 : k); else { ed.mi = -1; updCount(); toast('已全部取代完'); }
+}
+function replaceAll(){
+  const q = $('#fq').value, r = $('#fr').value; if (!q) return;
+  syncEd();
+  const list = ed.scope === 'ch' ? [ed.ci] : ed.draft.map((_,i) => i);
+  let n = 0, chs = 0;
+  for (const ci of list){ const parts = ed.draft[ci].text.split(q); if (parts.length > 1){ n += parts.length - 1; chs++; ed.draft[ci].text = parts.join(r); } }
+  $('#edText').value = ed.draft[ed.ci].text;
+  if (n) markDirty();
+  refreshFind();
+  toast(n ? `已取代 ${n} 處` + (ed.scope === 'all' ? `（${chs} 章）` : '') + '，按「儲存」才會保存' : '找不到符合的文字');
+}
+async function exportMd(){
+  if (ed.dirty){ toast('請先按「儲存」，再匯出'); return; }
+  const md = `# ${st.title}\n\n` + st.chapters.map(c => `## ${c.title}\n\n${chText(c)}`).join('\n\n') + '\n';
+  const name = (st.file || st.title || '文件').replace(/\.[^.]+$/, '') + '.md';
+  const f = new File([md], name, { type:'text/plain' });
+  try { if (navigator.canShare && navigator.canShare({ files:[f] })){ await navigator.share({ files:[f], title:name }); return; } }
+  catch(e){ if (e.name === 'AbortError') return; }
+  const a = document.createElement('a'); a.href = URL.createObjectURL(f); a.download = name;
+  document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1500);
+}
+let findT = null;
+$('#editBtn').onclick = openEditor;
+$('#edBack').onclick = () => { syncEd(); if (ed.dirty){ $('#edDiscard').hidden = false; return; } closeEditor(); };
+$('#edDiscardYes').onclick = closeEditor;
+$('#edDiscardNo').onclick = () => { $('#edDiscard').hidden = true; };
+$('#edSave').onclick = saveEditor;
+$('#edExport').onclick = exportMd;
+$('#edText').oninput = () => { markDirty(); clearTimeout(findT); findT = setTimeout(() => { if ($('#fq').value) refreshFind(); }, 400); };
+$('#edTitle').oninput = markDirty;
+$('#edFindBtn').onclick = () => { const f = $('#edFind'); f.hidden = !f.hidden; $('#edFindBtn').setAttribute('aria-pressed', !f.hidden); if (!f.hidden) $('#fq').focus(); };
+$('#fq').oninput = () => { clearTimeout(findT); findT = setTimeout(refreshFind, 250); };
+$('#fq').onkeydown = e => { if (e.key === 'Enter'){ e.preventDefault(); clearTimeout(findT); if (ed.mi < 0) refreshFind(); gotoMatch(ed.mi + 1); } };
+$('#fNext').onclick = () => gotoMatch(ed.mi + 1);
+$('#fPrev').onclick = () => gotoMatch(ed.mi < 0 ? -1 : ed.mi - 1);
+$('#fRep').onclick = replaceOne;
+$('#fRepAll').onclick = replaceAll;
+$('#fScope').onclick = e => {
+  const b = e.target.closest('button'); if (!b) return;
+  ed.scope = b.dataset.s;
+  document.querySelectorAll('#fScope button').forEach(x => x.setAttribute('aria-pressed', x === b));
+  refreshFind();
+};
+
 /* ---------- boot ---------- */
 (function boot(){
   const r = LS.get('rate'); if (r){ st.rate = r; $('#rate').value = r; $('#rateVal').textContent = (+r).toFixed(1); }
   Object.assign(look, LS.get('look') || {}); const oldFs = LS.get('fs'); if (oldFs && !LS.get('look')) look.fs = oldFs; applyLook();
   st.voiceURI = LS.get('voice');
   if (LS.get('dockCollapsed')) setDock(true);
-  const tm = LS.get('timer'); if (tm){ st.timer.mode = tm; document.querySelectorAll('#timerChips .chip').forEach(x => x.setAttribute('aria-pressed', x.dataset.t === tm)); timerTick(); }
+  const tm = LS.get('timer'); if (tm) setTimerMode(String(tm));
   const b = LS.get('book');
+  if (b && b.chapters && b.chapters.length){
+    setBook(b.name, { title:b.title, chapters:b.chapters }, (LS.get('pos') || {})[b.name] || {}); toast(`接續上次：${st.chapters[st.ci].title}`); return;
+  }
   if (b && b.raw){
     const res = buildChapters(b.raw, b.pages);
     if (res.chapters.length){ setBook(b.name, res, (LS.get('pos') || {})[b.name] || {}); toast(`接續上次：${st.chapters[st.ci].title}`); return; }
