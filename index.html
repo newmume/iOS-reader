@@ -76,7 +76,9 @@ header{display:flex;align-items:center;gap:12px;padding-block:12px 8px}
 #edText{flex:1;min-height:0;resize:none;border:1px solid var(--line);background:var(--surface);border-radius:12px;padding:12px;font-family:var(--f-read);font-size:17px;line-height:1.8;color:var(--ink)}
 .ed-foot{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--muted)}
 .ed-foot span{flex:1}
-.text h2{font-family:var(--f-read);font-size:22px;margin:8px 8px 12px;text-wrap:balance}
+.text h2{font-family:var(--f-read);font-size:22px;margin:8px 0 12px;padding:6px 8px;border-radius:10px;text-wrap:balance;transition:background .2s;cursor:pointer}
+.text h2.cur{background:var(--hl)}
+.nohl .text h2.cur{background:transparent}
 .note{font-size:12px;color:var(--muted);margin:0 8px 12px;line-height:1.6}
 .dock{border-top:1px solid var(--line);padding-block:4px calc(10px + env(safe-area-inset-bottom,0px));display:grid;gap:10px;background:var(--bg)}
 .dock .full{display:grid;gap:10px}
@@ -386,7 +388,7 @@ async function openFile(f){
     else raw = decodeText(buf);
     const r = buildChapters(raw, pages);
     if (!r.chapters.length){ toast('這個檔案讀不到文字（可能是掃描圖片型 PDF）'); return; }
-    const pos = (LS.get('pos') || {})[name] || { ci:0, pi:0 };
+    const pos = (LS.get('pos') || {})[name] || { ci:0, pi:-1 };
     setBook(name, r, pos);
     const stored = LS.set('book', { name, raw, pages, ext });
     toast(`已載入 ${r.chapters.length} 章` + (stored ? '' : '（檔案太大，下次需重新開啟）'));
@@ -397,7 +399,7 @@ function setBook(name, r, pos){
   st.file = name; st.chapters = r.chapters;
   st.title = r.title || name.replace(/\.[^.]+$/,'');
   st.ci = Math.min(pos.ci || 0, st.chapters.length - 1);
-  st.pi = Math.min(pos.pi || 0, st.chapters[st.ci].paras.length - 1);
+  st.pi = Math.min(typeof pos.pi === 'number' ? pos.pi : -1, st.chapters[st.ci].paras.length - 1);
   $('#bookTitle').textContent = st.title;
   $('#bookMeta').textContent = name ? `${name}・共 ${st.chapters.length} 章` : '先點右邊「開啟檔案」選你的檔案';
   renderChapter(true);
@@ -407,7 +409,7 @@ function setBook(name, r, pos){
 function renderChapter(scroll){
   const ch = st.chapters[st.ci], box = $('#text');
   box.innerHTML = '';
-  const h = document.createElement('h2'); h.textContent = ch.title; box.appendChild(h);
+  const h = document.createElement('h2'); h.textContent = ch.title; h.id = 'chTitle'; box.appendChild(h);
   if (!st.file){ const n = document.createElement('p'); n.className = 'note'; n.textContent = '範例：點任一段文字就會從那裡開始念。'; box.appendChild(n); }
   const frag = document.createDocumentFragment();
   ch.paras.forEach((p,i) => { const el = document.createElement('p'); el.textContent = p; el.dataset.i = i; frag.appendChild(el); });
@@ -417,11 +419,12 @@ function renderChapter(scroll){
 function updateNow(scroll){
   const ch = st.chapters[st.ci];
   $('#chName').textContent = ch.title;
-  $('#chPos').textContent = `本章第 ${st.pi+1}/${ch.paras.length} 段・點這裡選章節`;
+  $('#chPos').textContent = (st.pi < 0 ? '本章標題' : `本章第 ${st.pi+1}/${ch.paras.length} 段`) + '・點這裡選章節';
+  const ht = $('#chTitle'); if (ht) ht.classList.toggle('cur', st.pi === -1);
   document.querySelectorAll('#text p[data-i]').forEach(el => {
     const i = +el.dataset.i; el.classList.toggle('cur', i === st.pi); el.classList.toggle('done', i < st.pi);
   });
-  if (scroll){ const el = document.querySelector(`#text p[data-i="${st.pi}"]`); if (el) el.scrollIntoView({ block:'center', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' }); }
+  if (scroll){ const el = st.pi < 0 ? $('#chTitle') : document.querySelector(`#text p[data-i="${st.pi}"]`); if (el) el.scrollIntoView({ block:'center', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' }); }
   savePos(); updateMini();
 }
 function savePos(){ if (!st.file) return; const all = LS.get('pos') || {}; all[st.file] = { ci:st.ci, pi:st.pi }; LS.set('pos', all); }
@@ -431,18 +434,20 @@ function pickVoice(){
   const vs = synth.getVoices();
   return vs.find(v => v.voiceURI === st.voiceURI) || vs.find(v => v.lang === 'zh-TW') || vs.find(v => /^zh/i.test(v.lang)) || null;
 }
+// Chapter title is position -1: spoken before the first paragraph. Separators become a pause; leading zeros dropped ("001" → "1").
+function titleForSpeech(t){ return t.replace(/[｜|]/g, '，').replace(/(^|\s)0+(\d)/g, '$1$2').trim(); }
 function speakCurrent(){
   if (!st.playing) return;
   const ch = st.chapters[st.ci];
   if (st.pi >= ch.paras.length){
     if (st.timer.mode === 'ch'){ stop('本章念完，已停止'); return; }
     if (st.ci + 1 >= st.chapters.length){ stop('全部念完了'); return; }
-    st.ci++; st.pi = 0; renderChapter(false);
+    st.ci++; st.pi = -1; renderChapter(false);
   }
   if (timeUp()) return;
   updateNow(true);
   const gen = ++st.gen;
-  const u = new SpeechSynthesisUtterance(st.chapters[st.ci].paras[st.pi]);
+  const u = new SpeechSynthesisUtterance(st.pi < 0 ? titleForSpeech(st.chapters[st.ci].title) : st.chapters[st.ci].paras[st.pi]);
   const v = pickVoice(); if (v){ u.voice = v; u.lang = v.lang; } else u.lang = 'zh-TW';
   u.rate = st.rate;
   u.onend = () => { if (gen !== st.gen || !st.playing) return; st.pi++; speakCurrent(); };
@@ -465,7 +470,7 @@ function stop(msg){
 }
 function jump(ci, pi){
   const was = st.playing; if (was){ st.gen++; synth.cancel(); }
-  const chChanged = ci !== st.ci; st.ci = ci; st.pi = Math.max(0, pi);
+  const chChanged = ci !== st.ci; st.ci = ci; st.pi = Math.max(-1, pi);
   if (chChanged) renderChapter(true); else updateNow(true);
   if (was) setTimeout(speakCurrent, 60);
 }
@@ -567,11 +572,11 @@ function updateMini(){
   else if (st.timer.mode !== '0') t += `・播放後 ${st.timer.mode} 分鐘停`;
   $('#miniStat').textContent = t;
 }
-$('#prevP').onclick = () => { if (st.pi > 0) jump(st.ci, st.pi - 1); else if (st.ci > 0) jump(st.ci - 1, st.chapters[st.ci-1].paras.length - 1); };
-$('#nextP').onclick = () => { if (st.pi + 1 < st.chapters[st.ci].paras.length) jump(st.ci, st.pi + 1); else if (st.ci + 1 < st.chapters.length) jump(st.ci + 1, 0); };
-$('#prevCh').onclick = () => jump(Math.max(0, st.pi > 0 ? st.ci : st.ci - 1), 0);
-$('#nextCh').onclick = () => { if (st.ci + 1 < st.chapters.length) jump(st.ci + 1, 0); };
-$('#text').onclick = e => { const p = e.target.closest('p[data-i]'); if (!p) return; jump(st.ci, +p.dataset.i); if (!st.playing) play(); };
+$('#prevP').onclick = () => { if (st.pi > -1) jump(st.ci, st.pi - 1); else if (st.ci > 0) jump(st.ci - 1, st.chapters[st.ci-1].paras.length - 1); };
+$('#nextP').onclick = () => { if (st.pi + 1 < st.chapters[st.ci].paras.length) jump(st.ci, st.pi + 1); else if (st.ci + 1 < st.chapters.length) jump(st.ci + 1, -1); };
+$('#prevCh').onclick = () => jump(st.pi > -1 ? st.ci : Math.max(0, st.ci - 1), -1);
+$('#nextCh').onclick = () => { if (st.ci + 1 < st.chapters.length) jump(st.ci + 1, -1); };
+$('#text').onclick = e => { const p = e.target.closest('p[data-i], #chTitle'); if (!p) return; jump(st.ci, p.id === 'chTitle' ? -1 : +p.dataset.i); if (!st.playing) play(); };
 
 const PRESETS = ['0','15','30','45','60','90','ch'];
 function setTimerMode(mode){
@@ -617,7 +622,7 @@ function renderList(q){
     const b = document.createElement('button'); b.className = i === st.ci ? 'on' : '';
     const own = /^\s*(\d|第)/.test(c.title);
     b.innerHTML = `<span class="n">${own ? '' : i+1}</span><span class="t"></span>`; b.querySelector('.t').textContent = c.title;
-    b.onclick = () => { $('#chSheet').hidden = true; jump(i, 0); };
+    b.onclick = () => { $('#chSheet').hidden = true; jump(i, -1); };
     frag.appendChild(b); if (!first) first = b;
   });
   list.appendChild(frag);
@@ -701,7 +706,7 @@ function openEditor(){
 }
 function closeEditor(){
   $('#editor').hidden = true; $('#edDiscard').hidden = true;
-  if (ed.ci !== st.ci && ed.ci < st.chapters.length){ st.ci = ed.ci; st.pi = 0; }
+  if (ed.ci !== st.ci && ed.ci < st.chapters.length){ st.ci = ed.ci; st.pi = -1; }
   st.pi = Math.min(st.pi, st.chapters[st.ci].paras.length - 1);
   renderChapter(true);
   ed.draft = ed.orig = null;
@@ -839,7 +844,7 @@ $('#fScope').onclick = e => {
     const res = buildChapters(b.raw, b.pages);
     if (res.chapters.length){ setBook(b.name, res, (LS.get('pos') || {})[b.name] || {}); toast(`接續上次：${st.chapters[st.ci].title}`); return; }
   }
-  setBook('', buildChapters(SAMPLE), { ci:0, pi:0 });
+  setBook('', buildChapters(SAMPLE), { ci:0, pi:-1 });
 })();
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
 </script>
