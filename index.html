@@ -84,6 +84,14 @@ header{display:flex;align-items:center;gap:12px;padding-block:12px 8px}
 .dock .full{display:grid;gap:10px}
 .tools{justify-content:center;gap:8px;flex-wrap:wrap}
 .tools .pill{font-size:13px;padding:6px 11px}
+/* Speak Screen mode: only the story text is on the page, starting at the chosen paragraph */
+body.ssmode .app, body.ssmode .sheet-bg, body.ssmode .toast, body.ssmode .dim{display:none!important}
+body.ssmode{height:auto}
+.ss{max-width:680px;margin:0 auto;padding:calc(20px + env(safe-area-inset-top,0px)) 20px 30vh;box-sizing:border-box}
+.ss h2{font-family:var(--f-read);font-size:calc(var(--fs,19px) + 3px);margin:28px 0 14px;text-wrap:balance}
+.ss h2:first-child{margin-top:0}
+.ss p{font-family:var(--f-read);font-size:var(--fs,19px);line-height:var(--lh,1.85);margin:0 0 .7em}
+.ss .ss-end{margin-top:40px;text-align:center;color:var(--muted);font-size:14px;display:grid;gap:12px;justify-items:center}
 .dock.collapsed .full,.dock:not(.collapsed) .mini{display:none}
 .handle{justify-self:center;display:flex;flex-direction:column;align-items:center;gap:3px;background:none;border:0;padding:4px 24px 0;color:var(--muted);font-size:11px}
 .handle i{display:block;width:38px;height:5px;border-radius:3px;background:var(--line)}
@@ -189,6 +197,7 @@ header{display:flex;align-items:center;gap:12px;padding-block:12px 8px}
       <button class="pill" id="lookBtn">Aa 外觀</button>
       <button class="pill" id="setBtn">語音與速度</button>
       <button class="pill" id="editBtn">✎ 編輯</button>
+      <button class="pill primary" id="ssBtn">朗讀螢幕模式</button>
     </div>
       </div>
     <div class="mini">
@@ -203,6 +212,18 @@ header{display:flex;align-items:center;gap:12px;padding-block:12px 8px}
     <h3><span id="chCount">目錄</span><button class="pill" data-close>關閉</button></h3>
     <input type="search" id="chSearch" placeholder="輸入章號或關鍵字，例如 145" inputmode="search">
     <div class="list" id="chList"></div>
+  </div>
+</div>
+
+<div class="sheet-bg" id="ssSheet" hidden>
+  <div class="sheet" role="dialog" aria-label="朗讀螢幕模式">
+    <h3><span>朗讀螢幕模式</span><button class="pill" data-close>取消</button></h3>
+    <p class="hint" style="margin:0 0 12px">畫面只會留下小說文字，從<b id="ssFrom"></b>開始。再用 iPhone 的「朗讀螢幕」（兩指從頂端往下滑，或輔助觸控）來念，靜音模式也有聲音。</p>
+    <div class="row"><label>念到哪裡停</label>
+      <div class="seg" id="ssRange"><button data-r="0">本章結束</button><button data-r="1">再多 1 章</button><button data-r="3">再多 3 章</button><button data-r="all">全書結束</button></div>
+    </div>
+    <p class="hint" style="margin:0 0 14px">回到朗讀器：<b>雙擊畫面</b>，或捲到最底按「回到朗讀器」。會依畫面位置記住讀到哪一段。</p>
+    <button class="pill primary" id="ssStart" style="width:100%;padding:12px;font-size:16px">開始</button>
   </div>
 </div>
 
@@ -271,6 +292,8 @@ header{display:flex;align-items:center;gap:12px;padding-block:12px 8px}
   <textarea id="edText" spellcheck="false" aria-label="章節內容"></textarea>
   <div class="ed-foot"><span id="edInfo"></span><button class="pill" id="edExport">匯出整份文件 .md</button></div>
 </div>
+
+<main class="ss" id="ssView" hidden></main>
 
 <div class="dim" id="dim" hidden><div id="dimText">朗讀中<br>點一下螢幕回到控制畫面</div></div>
 <div class="toast" id="toast" hidden></div>
@@ -952,6 +975,72 @@ async function exportMd(){
 }
 let findT = null;
 $('#editBtn').onclick = openEditor;
+
+/* ---------- Speak Screen mode ---------- */
+// iOS "Speak Screen" reads the page from the top and ignores the silent switch, unlike web speech.
+// So this view puts nothing on the page except the story, starting exactly at the chosen paragraph.
+function ssStartPos(){ return { ci: st.ci, pi: st.pi }; }
+function ssEndChapter(r){ return r === 'all' ? st.chapters.length - 1 : Math.min(st.chapters.length - 1, st.ci + (+r || 0)); }
+$('#ssBtn').onclick = () => {
+  if (st.playing) pause();
+  const ch = st.chapters[st.ci];
+  $('#ssFrom').textContent = `「${ch.title}」` + (st.pi < 0 ? '的標題' : `第 ${st.pi + 1} 段`);
+  const r = LS.get('ssRange') || '0';
+  document.querySelectorAll('#ssRange button').forEach(b => b.setAttribute('aria-pressed', b.dataset.r === r));
+  openSheet('#ssSheet');
+};
+$('#ssRange').onclick = e => {
+  const b = e.target.closest('button'); if (!b) return;
+  LS.set('ssRange', b.dataset.r);
+  document.querySelectorAll('#ssRange button').forEach(x => x.setAttribute('aria-pressed', x === b));
+};
+let ssScrollT = null;
+function enterSpeakScreen(){
+  const r = LS.get('ssRange') || '0', from = ssStartPos(), last = ssEndChapter(r);
+  const view = $('#ssView'); view.innerHTML = '';
+  const frag = document.createDocumentFragment();
+  for (let ci = from.ci; ci <= last; ci++){
+    const c = st.chapters[ci];
+    const startPi = ci === from.ci ? from.pi : -1;
+    if (startPi < 0){ const h = document.createElement('h2'); h.textContent = c.title; h.dataset.ci = ci; h.dataset.pi = -1; frag.appendChild(h); }
+    for (let pi = Math.max(0, startPi); pi < c.paras.length; pi++){
+      const p = document.createElement('p'); p.textContent = c.paras[pi]; p.dataset.ci = ci; p.dataset.pi = pi; frag.appendChild(p);
+    }
+  }
+  const end = document.createElement('div'); end.className = 'ss-end';
+  const endTxt = document.createElement('div'); endTxt.textContent = '（朗讀範圍到此結束）';
+  const back = document.createElement('button'); back.className = 'pill'; back.textContent = '回到朗讀器'; back.onclick = exitSpeakScreen;
+  end.append(endTxt, back); frag.appendChild(end);
+  view.appendChild(frag);
+  $('#ssSheet').hidden = true;
+  document.body.classList.add('ssmode'); view.hidden = false;
+  window.scrollTo(0, 0);
+  window.addEventListener('scroll', ssOnScroll, { passive:true });
+}
+// Speak Screen scrolls the page as it reads; the first paragraph at the top of the screen is where we are
+function ssTopBlock(){
+  const blocks = $('#ssView').querySelectorAll('[data-ci]');
+  for (const b of blocks){ if (b.getBoundingClientRect().bottom > 60) return b; }
+  return null;
+}
+function ssOnScroll(){
+  clearTimeout(ssScrollT);
+  ssScrollT = setTimeout(() => { const b = ssTopBlock(); if (b){ st.ci = +b.dataset.ci; st.pi = +b.dataset.pi; savePos(); } }, 400);
+}
+function exitSpeakScreen(){
+  const b = ssTopBlock(); if (b){ st.ci = +b.dataset.ci; st.pi = +b.dataset.pi; }
+  window.removeEventListener('scroll', ssOnScroll);
+  document.body.classList.remove('ssmode'); $('#ssView').hidden = true; $('#ssView').innerHTML = '';
+  window.scrollTo(0, 0);
+  renderChapter(true);
+}
+$('#ssStart').onclick = enterSpeakScreen;
+$('#ssView').addEventListener('dblclick', exitSpeakScreen);
+let ssLastTap = 0;
+$('#ssView').addEventListener('touchend', e => {   // iOS double-tap
+  const now = Date.now();
+  if (now - ssLastTap < 300){ e.preventDefault(); exitSpeakScreen(); ssLastTap = 0; } else ssLastTap = now;
+});
 $('#edBack').onclick = () => { syncEd(); if (ed.dirty){ $('#edDiscard').hidden = false; return; } closeEditor(); };
 $('#edDiscardYes').onclick = closeEditor;
 $('#edDiscardNo').onclick = () => { $('#edDiscard').hidden = true; };
