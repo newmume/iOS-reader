@@ -293,7 +293,7 @@ const SAMPLE = `# 範例文件
 按「熄屏聆聽」會把螢幕蓋成全黑，但朗讀會繼續。點一下螢幕就能回來。時間到停止後，手機會照自動鎖定的設定休眠。`;
 
 const st = { title:'', file:'', chapters:[], ci:0, pi:0, playing:false, utt:null, gen:0,
-  timer:{mode:'0', endAt:0}, wake:null, rate:1, voiceURI:null };
+  timer:{mode:'0', endAt:0}, wake:null, rate:1, voiceURI:null, q:[], qNext:null };
 
 /* ---------- parsing ---------- */
 function decodeEntities(s){ return s.replace(/&nbsp;/g,' ').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&quot;/g,'"').replace(/&#39;/g,"'").replace(/&amp;/g,'&'); }
@@ -463,31 +463,71 @@ function speakNow(u){
 }
 // Chapter title is position -1: spoken before the first paragraph. Separators become a pause; leading zeros dropped ("001" → "1").
 function titleForSpeech(t){ return t.replace(/[｜|]/g, '，').replace(/(^|\s)0+(\d)/g, '$1$2').trim(); }
-function speakCurrent(){
-  if (!st.playing) return;
-  const ch = st.chapters[st.ci];
-  if (st.pi >= ch.paras.length){
-    if (st.timer.mode === 'ch'){ stop('本章念完，已停止'); return; }
-    if (st.ci + 1 >= st.chapters.length){ stop('全部念完了'); return; }
-    st.ci++; st.pi = -1; renderChapter(false);
+/* Reading engine: a queue.
+   On play (inside the tap) many sentences are handed to iOS at once, so it can read on without
+   needing a new tap for every sentence. While it reads, the queue is topped up; onstart tells us
+   which sentence is being heard (for the highlight). A watchdog restarts reading if iOS goes quiet. */
+const AHEAD = 150;                      // sentences kept queued ahead (≈ one or two chapters)
+const posNext = (ci, pi) => {           // next reading position; pi -1 = chapter title
+  if (pi + 1 < st.chapters[ci].paras.length) return { ci, pi: pi + 1 };
+  if (ci + 1 < st.chapters.length) return { ci: ci + 1, pi: -1 };
+  return null;
+};
+const textAt = (ci, pi) => pi < 0 ? titleForSpeech(st.chapters[ci].title) : st.chapters[ci].paras[pi];
+function curPos(){ return st.q.length ? { ci: st.q[0].ci, pi: st.q[0].pi } : (st.qNext || { ci: st.ci, pi: st.pi }); }
+function enqueue(ci, pi){
+  const gen = st.gen, u = makeUtt(textAt(ci, pi)), rec = { ci, pi, u };
+  u.onstart = () => { u._started = true; if (gen === st.gen && st.playing) onUttStart(rec); };
+  u.onend = () => { rec.done = true; if (gen === st.gen && st.playing) onUttEnd(rec); };
+  u.onerror = e => {
+    rec.done = true; if (gen !== st.gen || !st.playing) return;
+    // interrupted/canceled that we did not ask for (another sound, a call, iOS): resume from this sentence
+    if (e.error === 'interrupted' || e.error === 'canceled') setTimeout(() => { if (gen === st.gen && st.playing) restartFrom(rec.ci, rec.pi); }, 400);
+    else onUttEnd(rec);               // this sentence can't be spoken: skip it
+  };
+  st.q.push(rec); speakNow(u);
+}
+function fillQueue(){
+  while (st.playing && st.q.length < AHEAD && st.qNext){
+    const n = st.qNext;
+    if (st.timer.mode === 'ch' && n.ci !== st.ci) break;   // "念完本章": queue nothing past this chapter
+    st.qNext = posNext(n.ci, n.pi); enqueue(n.ci, n.pi);
   }
+}
+function onUttStart(rec){
+  st.lastEvent = Date.now(); st.anyStarted = true; st.silentTries = 0;
+  while (st.q.length && st.q[0] !== rec) st.q.shift();
+  if (rec.ci !== st.ci){ st.ci = rec.ci; st.pi = rec.pi; renderChapter(false); }
+  st.pi = rec.pi; updateNow(true);
+  fillQueue();
+}
+function onUttEnd(rec){
+  st.lastEvent = Date.now();
+  const i = st.q.indexOf(rec); if (i >= 0) st.q.splice(0, i + 1);
   if (timeUp()) return;
-  updateNow(true);
-  const gen = ++st.gen;
-  const u = makeUtt(st.pi < 0 ? titleForSpeech(st.chapters[st.ci].title) : st.chapters[st.ci].paras[st.pi]);
-  let ended = false;
-  u.onend = () => { ended = true; if (gen !== st.gen || !st.playing) return; st.silentTries = 0; st.pi++; speakCurrent(); };
-  u.onerror = e => { ended = true; if (gen !== st.gen || !st.playing) return; if (e.error === 'interrupted' || e.error === 'canceled') return; st.pi++; speakCurrent(); };
-  st.utt = u; // keep a reference so iOS doesn't drop onend
-  speakNow(u);
-  // Watchdog: nothing started and the engine is idle after 2.5 s → the voice is silent or the first speak was dropped
-  setTimeout(() => {
-    if (gen !== st.gen || !st.playing || u._started || ended || synth.speaking) return;
-    st.silentTries = (st.silentTries || 0) + 1;
-    if (u._usedVoice && !st.forceAuto){ st.forceAuto = true; toast('所選語音無法發聲，已暫時改用「自動」語音'); speakCurrent(); return; }
-    if (st.silentTries <= 1){ synth.cancel(); speakCurrent(); return; }
-    pause(); toast('還是沒有聲音：請確認手機不是靜音模式、音量已調大，再按播放或到「語音與速度」按「試聽」');
-  }, 2500);
+  const next = st.q[0] || st.qNext;
+  if (st.timer.mode === 'ch' && (!st.q.length) && (!next || next.ci !== rec.ci)){ stop('本章念完，已停止'); return; }
+  if (!next){ stop('全部念完了'); return; }
+  if (!st.q.length) fillQueue();
+}
+function restartFrom(ci, pi){
+  st.gen++; synth.cancel();
+  st.q = []; st.qNext = { ci, pi };
+  if (ci !== st.ci){ st.ci = ci; st.pi = pi; renderChapter(true); } else { st.pi = pi; updateNow(true); }
+  fillQueue();
+}
+let watchT = null;
+function watchdog(){
+  if (!st.playing) return;
+  if (synth.speaking || synth.pending){ st.idleSince = 0; return; }
+  if (!st.idleSince){ st.idleSince = Date.now(); return; }
+  if (Date.now() - st.idleSince < 2500) return;
+  st.idleSince = 0;
+  const p = curPos();
+  st.silentTries = (st.silentTries || 0) + 1;
+  if (!st.anyStarted && pickVoice() && !st.forceAuto){ st.forceAuto = true; toast('所選語音無法發聲，已暫時改用「自動」語音'); restartFrom(p.ci, p.pi); return; }
+  if (st.silentTries <= 2){ restartFrom(p.ci, p.pi); return; }
+  pause(); toast(st.anyStarted ? '朗讀停住了，請再按一次播放繼續' : '沒有聲音：請確認音量已調大，再按播放或到「語音與速度」按「試聽」');
 }
 function play(){
   if (!synth){ toast('這個瀏覽器不支援語音朗讀'); return; }
@@ -495,19 +535,22 @@ function play(){
   if (st.timer.mode !== '0' && st.timer.mode !== 'ch' && !st.timer.endAt) armTimer(st.timer.mode);
   keepAwake(true);
   if (synth.speaking || synth.pending) synth.cancel();
-  st.gen++; st.silentTries = 0;
-  speakCurrent();   // called directly inside the tap: newer iOS ignores a first speak() that happens after a delay
+  st.gen++; st.silentTries = 0; st.anyStarted = false; st.idleSince = 0;
+  st.q = []; st.qNext = { ci: st.ci, pi: st.pi };
+  updateNow(true);
+  fillQueue();      // inside the tap: newer iOS ignores speech that isn't started by a tap
+  clearInterval(watchT); watchT = setInterval(watchdog, 1000);
 }
-function pause(){ st.playing = false; st.gen++; synth && synth.cancel(); setPlayIcon(); keepAwake(false); }
+function pause(){ st.playing = false; st.gen++; synth && synth.cancel(); st.q = []; clearInterval(watchT); setPlayIcon(); keepAwake(false); }
 function stop(msg){
   const was = st.playing; pause(); disarmTimer(); hideDim();
   if (msg && was) toast(msg);
 }
 function jump(ci, pi){
-  const was = st.playing; if (was){ st.gen++; synth.cancel(); }
-  const chChanged = ci !== st.ci; st.ci = ci; st.pi = Math.max(-1, pi);
+  pi = Math.max(-1, pi);
+  if (st.playing){ restartFrom(ci, pi); return; }   // inside the tap
+  const chChanged = ci !== st.ci; st.ci = ci; st.pi = pi;
   if (chChanged) renderChapter(true); else updateNow(true);
-  if (was) setTimeout(speakCurrent, 60);
 }
 function setPlayIcon(){
   document.querySelectorAll('.pico').forEach(i => i.innerHTML = st.playing ? '<path d="M7 5h4v14H7zM13 5h4v14h-4z"/>' : '<path d="M8 5v14l11-7z"/>');
@@ -591,8 +634,6 @@ function playbackSession(on){
       if (!bgAudio){
         bgAudio = new Audio(silentWavUrl()); bgAudio.loop = true;
         bgAudio.setAttribute('x-webkit-airplay', 'deny'); bgAudio.setAttribute('playsinline', '');
-        // speak() can pause other media on iOS; restart the silent loop while reading continues
-        bgAudio.addEventListener('pause', () => { if (st.playing && st.ignoreMute) setTimeout(() => { const r = bgAudio.play(); if (r && r.catch) r.catch(() => {}); }, 300); });
       }
       const r = bgAudio.play(); if (r && r.catch) r.catch(() => {});
     } else if (bgAudio && !bgAudio.paused) bgAudio.pause();
@@ -660,6 +701,7 @@ function setTimerMode(mode){
   $('#customChip').textContent = custom ? `自訂 ${mode} 分` : '自訂';
   if (st.playing) armTimer(mode); else { st.timer.mode = mode; st.timer.endAt = 0; timerTick(); }
   LS.set('timer', mode);
+  if (st.playing && mode === 'ch'){ const p = curPos(); restartFrom(p.ci, p.pi); }
 }
 $('#timerChips').onclick = e => {
   const c = e.target.closest('.chip[data-t]'); if (!c) return;
@@ -735,7 +777,7 @@ $('#muteSeg').onclick = e => {
   if (st.playing) playbackSession(st.ignoreMute); else playbackSession(false);
   toast(st.ignoreMute ? '靜音模式下也會朗讀' : '朗讀會跟隨靜音開關');
 };
-$('#voice').onchange = e => { st.voiceURI = e.target.value; st.forceAuto = false; LS.set('voice2', st.voiceURI); };
+$('#voice').onchange = e => { st.voiceURI = e.target.value; st.forceAuto = false; LS.set('voice2', st.voiceURI); if (st.playing){ const p = curPos(); restartFrom(p.ci, p.pi); } };
 // Test: spoken directly inside the tap, reports whether sound actually started
 $('#testVoice').onclick = () => {
   if (!synth){ $('#testMsg').textContent = '這個瀏覽器不支援語音朗讀。'; return; }
@@ -753,6 +795,7 @@ $('#testVoice').onclick = () => {
   setTimeout(() => { if (!done && !u._started && !synth.speaking) $('#testMsg').textContent = '⚠ 這個語音沒有發聲，請換一個，或選「自動」。'; }, 2500);
 };
 $('#rate').oninput = e => { st.rate = +e.target.value; $('#rateVal').textContent = st.rate.toFixed(1); LS.set('rate', st.rate); };
+$('#rate').onchange = () => { if (st.playing){ const p = curPos(); restartFrom(p.ci, p.pi); } };
 /* ---------- appearance (Aa) ---------- */
 const FONTS = {
   pingfang:{ css:'-apple-system,"PingFang TC","Noto Sans TC",sans-serif' },
