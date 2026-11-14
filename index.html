@@ -210,7 +210,7 @@ header{display:flex;align-items:center;gap:12px;padding-block:12px 8px}
   <div class="sheet" role="dialog" aria-label="語音與速度">
     <h3><span>語音與速度</span><button class="pill" data-close>完成</button></h3>
     <div class="row"><label for="voice">語音</label><select id="voice"></select><div class="testrow"><button class="pill" id="testVoice">▶ 試聽</button><span id="testMsg" class="hint"></span></div></div>
-    <div class="row"><label>靜音模式也要出聲</label><div class="seg" id="muteSeg"><button data-m="1">開啟</button><button data-m="0">關閉</button></div><p class="hint" style="margin:0">開啟後，朗讀會像播放音樂一樣不受靜音開關影響；朗讀時可能會讓其他 App 的音樂暫停。</p></div>
+    <div class="row"><label>靜音模式也要出聲</label><div class="seg" id="muteSeg"><button data-m="1">開啟</button><button data-m="0">關閉</button></div><p class="hint" style="margin:0">開啟後，朗讀會像播放音樂一樣不受靜音開關影響；朗讀時可能會讓其他 App 的音樂暫停。</p><p class="hint" id="audioDiag" style="margin:0"></p></div>
     <div class="row"><label for="rate">語速 <b id="rateVal">1.0</b>×</label><input type="range" id="rate" min="0.6" max="1.8" step="0.1" value="1"></div>
     <p class="hint">iOS 18 起，Safari 網頁只能使用 iPhone 內建的語音；在設定裡另外下載的語音不會出現在這份清單。建議選「自動」，由 iPhone 挑選中文語音。</p>
   </div>
@@ -548,7 +548,7 @@ function stop(msg){
 }
 function jump(ci, pi){
   pi = Math.max(-1, pi);
-  if (st.playing){ restartFrom(ci, pi); return; }   // inside the tap
+  if (st.playing){ unlockPlayback(); restartFrom(ci, pi); return; }   // inside the tap
   const chChanged = ci !== st.ci; st.ci = ci; st.pi = pi;
   if (chChanged) renderChapter(true); else updateNow(true);
 }
@@ -614,45 +614,37 @@ function showAwake(){
   else { b.className = 'awake bad'; b.textContent = '⚠ 螢幕會關'; b.dataset.msg = '這裡不允許保持螢幕常亮（常見於 Claude App 內）。請改用 Safari 開啟，或安裝離線版並加入主畫面。'; }
 }
 $('#awakeBadge').onclick = e => toast(e.currentTarget.dataset.msg || '');
-/* Silent-switch override: put the page in a "media playback" audio session (like music or video),
-   via the Audio Session API where Safari has it, plus a looping silent <audio> (iOS switches the
-   session to playback while unmuted media plays). Must start inside a tap. */
-let bgAudio = null;
+/* Silent switch: Safari treats page sound (speech included) as "ambient", which the silent switch mutes.
+   Inside the same tap, before speak(): set the Audio Session type to "playback" (Safari 16.4+) and
+   play a 0.05 s silent clip, so iOS treats the page like a music/video app. Not reset on pause. */
+let unlockAudio = null;
+st.audioDiag = { api: 'audioSession' in navigator, type: '', clip: '' };
 function silentWavUrl(){
-  const sr = 8000, n = sr, buf = new ArrayBuffer(44 + n), d = new DataView(buf);
+  const sr = 8000, n = 400, buf = new ArrayBuffer(44 + n), d = new DataView(buf);   // 0.05 s of 8-bit silence
   const w = (o, t) => { for (let i = 0; i < t.length; i++) d.setUint8(o + i, t.charCodeAt(i)); };
   w(0,'RIFF'); d.setUint32(4, 36 + n, true); w(8,'WAVE'); w(12,'fmt '); d.setUint32(16,16,true); d.setUint16(20,1,true); d.setUint16(22,1,true);
   d.setUint32(24, sr, true); d.setUint32(28, sr, true); d.setUint16(32,1,true); d.setUint16(34,8,true); w(36,'data'); d.setUint32(40, n, true);
-  for (let i = 0; i < n; i++) d.setUint8(44 + i, 128);   // 1 s of 8-bit silence
+  for (let i = 0; i < n; i++) d.setUint8(44 + i, 128);
   return URL.createObjectURL(new Blob([buf], { type:'audio/wav' }));
 }
-function playbackSession(on){
-  on = on && st.ignoreMute;
-  try { if ('audioSession' in navigator) navigator.audioSession.type = on ? 'playback' : 'auto'; } catch(e){}
+function unlockPlayback(){
+  try { if ('audioSession' in navigator){ navigator.audioSession.type = st.ignoreMute ? 'playback' : 'auto'; st.audioDiag.type = navigator.audioSession.type; } } catch(e){ st.audioDiag.type = '設定失敗'; }
+  if (!st.ignoreMute) return;
   try {
-    if (on){
-      if (!bgAudio){
-        bgAudio = new Audio(silentWavUrl()); bgAudio.loop = true;
-        bgAudio.setAttribute('x-webkit-airplay', 'deny'); bgAudio.setAttribute('playsinline', '');
-      }
-      const r = bgAudio.play(); if (r && r.catch) r.catch(() => {});
-    } else if (bgAudio && !bgAudio.paused) bgAudio.pause();
-  } catch(e){}
-  try {
-    if ('mediaSession' in navigator){
-      navigator.mediaSession.playbackState = on ? 'playing' : 'paused';
-      if (on && st.chapters[st.ci]) navigator.mediaSession.metadata = new MediaMetadata({ title: st.chapters[st.ci].title, artist: st.title || '枕邊朗讀器' });
-    }
-  } catch(e){}
+    if (!unlockAudio){ unlockAudio = new Audio(silentWavUrl()); unlockAudio.setAttribute('playsinline', ''); unlockAudio.setAttribute('x-webkit-airplay', 'deny'); }
+    unlockAudio.currentTime = 0;
+    const r = unlockAudio.play();
+    if (r && r.then) r.then(() => { st.audioDiag.clip = '成功'; showAudioDiag(); }, e => { st.audioDiag.clip = '被擋下（' + e.name + '）'; showAudioDiag(); });
+  } catch(e){ st.audioDiag.clip = '失敗'; }
 }
-if ('mediaSession' in navigator){
-  try {
-    navigator.mediaSession.setActionHandler('pause', () => { if (st.playing) pause(); });
-    navigator.mediaSession.setActionHandler('play', () => { if (!st.playing) play(); });
-  } catch(e){}
+function showAudioDiag(){
+  const el = $('#audioDiag'); if (!el) return;
+  const d = st.audioDiag;
+  el.textContent = !d.api ? '狀態：這個瀏覽器無法切換音訊模式，靜音時可能沒有聲音'
+    : `狀態：音訊模式 ${d.type || '尚未啟用（按一次播放或試聽）'}` + (d.clip ? `・靜音片段 ${d.clip}` : '');
 }
 function keepAwake(on){
-  playbackSession(on); // before speak(), inside the tap
+  if (on) unlockPlayback(); // before speak(), inside the tap
   clearTimeout(awakeCheckT); awakeCheckT = setTimeout(showAwake, 1500);
   awakeVideo(on); // must run inside the tap, before any await
   (async () => {
@@ -750,7 +742,7 @@ $('#chBtn').onclick = () => { $('#chSearch').value = ''; renderList(''); openShe
 $('#chSearch').oninput = e => renderList(e.target.value);
 $('#chSearch').onkeydown = e => { if (e.key === 'Enter'){ const f = $('#chList button'); if (f) f.click(); } };
 
-$('#setBtn').onclick = () => { fillVoices(); openSheet('#setSheet'); };
+$('#setBtn').onclick = () => { fillVoices(); showAudioDiag(); openSheet('#setSheet'); };
 function fillVoices(){
   const sel = $('#voice'); const vs = synth ? synth.getVoices() : [];
   let zh = vs.filter(v => /^zh/i.test(v.lang)); if (!zh.length) zh = vs;
@@ -774,7 +766,7 @@ function applyMute(){ document.querySelectorAll('#muteSeg button').forEach(b => 
 $('#muteSeg').onclick = e => {
   const b = e.target.closest('button'); if (!b) return;
   st.ignoreMute = b.dataset.m === '1'; LS.set('ignoreMute', st.ignoreMute); applyMute();
-  if (st.playing) playbackSession(st.ignoreMute); else playbackSession(false);
+  unlockPlayback(); showAudioDiag();
   toast(st.ignoreMute ? '靜音模式下也會朗讀' : '朗讀會跟隨靜音開關');
 };
 $('#voice').onchange = e => { st.voiceURI = e.target.value; st.forceAuto = false; LS.set('voice2', st.voiceURI); if (st.playing){ const p = curPos(); restartFrom(p.ci, p.pi); } };
@@ -783,7 +775,7 @@ $('#testVoice').onclick = () => {
   if (!synth){ $('#testMsg').textContent = '這個瀏覽器不支援語音朗讀。'; return; }
   if (st.playing) pause();
   if (synth.speaking || synth.pending) synth.cancel();
-  playbackSession(true); setTimeout(() => { if (!st.playing) playbackSession(false); }, 8000);
+  unlockPlayback();
   const save = st.forceAuto; st.forceAuto = false;
   const u = makeUtt('這是試聽，聽得到就代表可以正常朗讀。');
   st.forceAuto = save;
