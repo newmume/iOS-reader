@@ -120,6 +120,8 @@ header{display:flex;align-items:center;gap:12px;padding-block:12px 8px}
 .row label{font-size:13px;color:var(--muted)}
 .row select{border:1px solid var(--line);background:var(--bg);border-radius:12px;padding:10px;font-size:16px}
 .row input[type=range]{width:100%;accent-color:var(--accent)}
+.testrow{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:6px}
+.testrow .hint{flex:1;min-width:10em}
 .hint{font-size:12px;color:var(--muted);line-height:1.7;margin:0}
 .dim{position:fixed;inset:0;background:#000;z-index:30;display:flex;align-items:flex-end;justify-content:center;padding-bottom:calc(40px + env(safe-area-inset-bottom,0px));color:#5a4a50;font-size:13px;text-align:center;line-height:1.8}
 .toast{position:fixed;left:50%;top:calc(14px + env(safe-area-inset-top,0px));transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:9px 16px;border-radius:999px;font-size:13px;z-index:40;max-width:88%;text-align:center}
@@ -207,9 +209,9 @@ header{display:flex;align-items:center;gap:12px;padding-block:12px 8px}
 <div class="sheet-bg" id="setSheet" hidden>
   <div class="sheet" role="dialog" aria-label="語音與速度">
     <h3><span>語音與速度</span><button class="pill" data-close>完成</button></h3>
-    <div class="row"><label for="voice">語音</label><select id="voice"></select></div>
+    <div class="row"><label for="voice">語音</label><select id="voice"></select><div class="testrow"><button class="pill" id="testVoice">▶ 試聽</button><span id="testMsg" class="hint"></span></div></div>
     <div class="row"><label for="rate">語速 <b id="rateVal">1.0</b>×</label><input type="range" id="rate" min="0.6" max="1.8" step="0.1" value="1"></div>
-    <p class="hint">想要更自然的聲音：iPhone 設定 → 輔助使用 → 朗讀內容 → 聲音 → 中文（台灣），下載「增強版」語音，回來重新整理這頁就會出現在清單裡。</p>
+    <p class="hint">iOS 18 起，Safari 網頁只能使用 iPhone 內建的語音；在設定裡另外下載的語音不會出現在這份清單。建議選「自動」，由 iPhone 挑選中文語音。</p>
   </div>
 </div>
 
@@ -430,9 +432,33 @@ function updateNow(scroll){
 function savePos(){ if (!st.file) return; const all = LS.get('pos') || {}; all[st.file] = { ci:st.ci, pi:st.pi }; LS.set('pos', all); }
 
 /* ---------- speech ---------- */
+// 'auto' = don't set a voice, only lang zh-TW, and let iOS choose its default Chinese voice.
+// Since iOS 18, Safari only lists built-in voices, and a voice it lists may still fail to speak, so auto is the safe default.
 function pickVoice(){
-  const vs = synth.getVoices();
-  return vs.find(v => v.voiceURI === st.voiceURI) || vs.find(v => v.lang === 'zh-TW') || vs.find(v => /^zh/i.test(v.lang)) || null;
+  if (!st.voiceURI || st.voiceURI === 'auto' || st.forceAuto) return null;
+  return synth.getVoices().find(v => v.voiceURI === st.voiceURI) || null;
+}
+function voiceTag(v){
+  const u = (v.voiceURI || '') + ' ' + v.name;
+  if (/premium/i.test(u)) return '高品質';
+  if (/enhanced/i.test(u)) return '增強';
+  if (/compact/i.test(u)) return '標準';
+  if (/eloquence/i.test(u)) return '機械音';
+  return '';
+}
+// Builds an utterance; reports whether the engine actually started (onstart) so a silent voice can be detected
+function makeUtt(text, onDone){
+  const u = new SpeechSynthesisUtterance(text);
+  let v = pickVoice();
+  try { if (v){ u.voice = v; u.lang = v.lang; } else u.lang = 'zh-TW'; } catch(e){ v = null; u.lang = 'zh-TW'; }
+  u.rate = st.rate;
+  u._started = false; u._usedVoice = !!v;
+  u.onstart = () => { u._started = true; };
+  return u;
+}
+function speakNow(u){
+  try { if (synth.paused) synth.resume(); } catch(e){}   // iOS can leave the queue stuck in paused after an interruption
+  synth.speak(u);
 }
 // Chapter title is position -1: spoken before the first paragraph. Separators become a pause; leading zeros dropped ("001" → "1").
 function titleForSpeech(t){ return t.replace(/[｜|]/g, '，').replace(/(^|\s)0+(\d)/g, '$1$2').trim(); }
@@ -447,21 +473,29 @@ function speakCurrent(){
   if (timeUp()) return;
   updateNow(true);
   const gen = ++st.gen;
-  const u = new SpeechSynthesisUtterance(st.pi < 0 ? titleForSpeech(st.chapters[st.ci].title) : st.chapters[st.ci].paras[st.pi]);
-  const v = pickVoice(); if (v){ u.voice = v; u.lang = v.lang; } else u.lang = 'zh-TW';
-  u.rate = st.rate;
-  u.onend = () => { if (gen !== st.gen || !st.playing) return; st.pi++; speakCurrent(); };
-  u.onerror = e => { if (gen !== st.gen || !st.playing) return; if (e.error === 'interrupted' || e.error === 'canceled') return; st.pi++; speakCurrent(); };
+  const u = makeUtt(st.pi < 0 ? titleForSpeech(st.chapters[st.ci].title) : st.chapters[st.ci].paras[st.pi]);
+  let ended = false;
+  u.onend = () => { ended = true; if (gen !== st.gen || !st.playing) return; st.silentTries = 0; st.pi++; speakCurrent(); };
+  u.onerror = e => { ended = true; if (gen !== st.gen || !st.playing) return; if (e.error === 'interrupted' || e.error === 'canceled') return; st.pi++; speakCurrent(); };
   st.utt = u; // keep a reference so iOS doesn't drop onend
-  synth.speak(u);
+  speakNow(u);
+  // Watchdog: nothing started and the engine is idle after 2.5 s → the voice is silent or the first speak was dropped
+  setTimeout(() => {
+    if (gen !== st.gen || !st.playing || u._started || ended || synth.speaking) return;
+    st.silentTries = (st.silentTries || 0) + 1;
+    if (u._usedVoice && !st.forceAuto){ st.forceAuto = true; toast('所選語音無法發聲，已暫時改用「自動」語音'); speakCurrent(); return; }
+    if (st.silentTries <= 1){ synth.cancel(); speakCurrent(); return; }
+    pause(); toast('還是沒有聲音：請確認手機不是靜音模式、音量已調大，再按播放或到「語音與速度」按「試聽」');
+  }, 2500);
 }
 function play(){
   if (!synth){ toast('這個瀏覽器不支援語音朗讀'); return; }
   st.playing = true; setPlayIcon();
   if (st.timer.mode !== '0' && st.timer.mode !== 'ch' && !st.timer.endAt) armTimer(st.timer.mode);
   keepAwake(true);
-  synth.cancel(); st.gen++;
-  setTimeout(speakCurrent, 60);
+  if (synth.speaking || synth.pending) synth.cancel();
+  st.gen++; st.silentTries = 0;
+  speakCurrent();   // called directly inside the tap: newer iOS ignores a first speak() that happens after a delay
 }
 function pause(){ st.playing = false; st.gen++; synth && synth.cancel(); setPlayIcon(); keepAwake(false); }
 function stop(msg){
@@ -638,11 +672,37 @@ function fillVoices(){
   const sel = $('#voice'); const vs = synth ? synth.getVoices() : [];
   let zh = vs.filter(v => /^zh/i.test(v.lang)); if (!zh.length) zh = vs;
   zh.sort((a,b) => (b.lang === 'zh-TW') - (a.lang === 'zh-TW'));
-  const cur = pickVoice();
-  sel.innerHTML = zh.length ? '' : '<option>（系統預設）</option>';
-  zh.forEach(v => { const o = document.createElement('option'); o.value = v.voiceURI; o.textContent = `${v.name}（${v.lang}）`; if (cur && v.voiceURI === cur.voiceURI) o.selected = true; sel.appendChild(o); });
+  const seen = new Set(), names = {};
+  zh = zh.filter(v => !seen.has(v.voiceURI) && seen.add(v.voiceURI));
+  zh.forEach(v => { const k = v.name + v.lang; names[k] = (names[k] || 0) + 1; });
+  const count = {};
+  sel.innerHTML = '';
+  const auto = document.createElement('option'); auto.value = 'auto'; auto.textContent = '自動（iPhone 預設中文語音）'; sel.appendChild(auto);
+  zh.forEach(v => {
+    const k = v.name + v.lang; count[k] = (count[k] || 0) + 1;
+    const tag = voiceTag(v) || (names[k] > 1 ? `版本 ${count[k]}` : '');
+    const o = document.createElement('option'); o.value = v.voiceURI;
+    o.textContent = `${v.name}（${v.lang}）${tag ? '・' + tag : ''}`;
+    sel.appendChild(o);
+  });
+  sel.value = (st.voiceURI && zh.some(v => v.voiceURI === st.voiceURI)) ? st.voiceURI : 'auto';
 }
-$('#voice').onchange = e => { st.voiceURI = e.target.value; LS.set('voice', st.voiceURI); };
+$('#voice').onchange = e => { st.voiceURI = e.target.value; st.forceAuto = false; LS.set('voice2', st.voiceURI); };
+// Test: spoken directly inside the tap, reports whether sound actually started
+$('#testVoice').onclick = () => {
+  if (!synth){ $('#testMsg').textContent = '這個瀏覽器不支援語音朗讀。'; return; }
+  if (st.playing) pause();
+  if (synth.speaking || synth.pending) synth.cancel();
+  const save = st.forceAuto; st.forceAuto = false;
+  const u = makeUtt('這是試聽，聽得到就代表可以正常朗讀。');
+  st.forceAuto = save;
+  st.utt = u; let done = false;
+  $('#testMsg').textContent = '試聽中…';
+  u.onend = () => { done = true; $('#testMsg').textContent = u._started ? '✓ 有發聲。若沒聽到，請檢查靜音模式與音量。' : '已結束。若沒聽到聲音，請換一個語音再試。'; };
+  u.onerror = e => { done = true; $('#testMsg').textContent = `這個語音無法發聲（${e.error}），請換一個，或選「自動」。`; };
+  speakNow(u);
+  setTimeout(() => { if (!done && !u._started && !synth.speaking) $('#testMsg').textContent = '⚠ 這個語音沒有發聲，請換一個，或選「自動」。'; }, 2500);
+};
 $('#rate').oninput = e => { st.rate = +e.target.value; $('#rateVal').textContent = st.rate.toFixed(1); LS.set('rate', st.rate); };
 /* ---------- appearance (Aa) ---------- */
 const FONTS = {
@@ -833,7 +893,7 @@ $('#fScope').onclick = e => {
 (function boot(){
   const r = LS.get('rate'); if (r){ st.rate = r; $('#rate').value = r; $('#rateVal').textContent = (+r).toFixed(1); }
   Object.assign(look, LS.get('look') || {}); const oldFs = LS.get('fs'); if (oldFs && !LS.get('look')) look.fs = oldFs; applyLook();
-  st.voiceURI = LS.get('voice');
+  st.voiceURI = LS.get('voice2') || 'auto';   // old 'voice' key ignored: a voice saved on iOS 18 may no longer exist
   if (LS.get('dockCollapsed')) setDock(true);
   const tm = LS.get('timer'); if (tm) setTimerMode(String(tm));
   const b = LS.get('book');
