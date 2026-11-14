@@ -210,6 +210,7 @@ header{display:flex;align-items:center;gap:12px;padding-block:12px 8px}
   <div class="sheet" role="dialog" aria-label="語音與速度">
     <h3><span>語音與速度</span><button class="pill" data-close>完成</button></h3>
     <div class="row"><label for="voice">語音</label><select id="voice"></select><div class="testrow"><button class="pill" id="testVoice">▶ 試聽</button><span id="testMsg" class="hint"></span></div></div>
+    <div class="row"><label>靜音模式也要出聲</label><div class="seg" id="muteSeg"><button data-m="1">開啟</button><button data-m="0">關閉</button></div><p class="hint" style="margin:0">開啟後，朗讀會像播放音樂一樣不受靜音開關影響；朗讀時可能會讓其他 App 的音樂暫停。</p></div>
     <div class="row"><label for="rate">語速 <b id="rateVal">1.0</b>×</label><input type="range" id="rate" min="0.6" max="1.8" step="0.1" value="1"></div>
     <p class="hint">iOS 18 起，Safari 網頁只能使用 iPhone 內建的語音；在設定裡另外下載的語音不會出現在這份清單。建議選「自動」，由 iPhone 挑選中文語音。</p>
   </div>
@@ -570,7 +571,47 @@ function showAwake(){
   else { b.className = 'awake bad'; b.textContent = '⚠ 螢幕會關'; b.dataset.msg = '這裡不允許保持螢幕常亮（常見於 Claude App 內）。請改用 Safari 開啟，或安裝離線版並加入主畫面。'; }
 }
 $('#awakeBadge').onclick = e => toast(e.currentTarget.dataset.msg || '');
+/* Silent-switch override: put the page in a "media playback" audio session (like music or video),
+   via the Audio Session API where Safari has it, plus a looping silent <audio> (iOS switches the
+   session to playback while unmuted media plays). Must start inside a tap. */
+let bgAudio = null;
+function silentWavUrl(){
+  const sr = 8000, n = sr, buf = new ArrayBuffer(44 + n), d = new DataView(buf);
+  const w = (o, t) => { for (let i = 0; i < t.length; i++) d.setUint8(o + i, t.charCodeAt(i)); };
+  w(0,'RIFF'); d.setUint32(4, 36 + n, true); w(8,'WAVE'); w(12,'fmt '); d.setUint32(16,16,true); d.setUint16(20,1,true); d.setUint16(22,1,true);
+  d.setUint32(24, sr, true); d.setUint32(28, sr, true); d.setUint16(32,1,true); d.setUint16(34,8,true); w(36,'data'); d.setUint32(40, n, true);
+  for (let i = 0; i < n; i++) d.setUint8(44 + i, 128);   // 1 s of 8-bit silence
+  return URL.createObjectURL(new Blob([buf], { type:'audio/wav' }));
+}
+function playbackSession(on){
+  on = on && st.ignoreMute;
+  try { if ('audioSession' in navigator) navigator.audioSession.type = on ? 'playback' : 'auto'; } catch(e){}
+  try {
+    if (on){
+      if (!bgAudio){
+        bgAudio = new Audio(silentWavUrl()); bgAudio.loop = true;
+        bgAudio.setAttribute('x-webkit-airplay', 'deny'); bgAudio.setAttribute('playsinline', '');
+        // speak() can pause other media on iOS; restart the silent loop while reading continues
+        bgAudio.addEventListener('pause', () => { if (st.playing && st.ignoreMute) setTimeout(() => { const r = bgAudio.play(); if (r && r.catch) r.catch(() => {}); }, 300); });
+      }
+      const r = bgAudio.play(); if (r && r.catch) r.catch(() => {});
+    } else if (bgAudio && !bgAudio.paused) bgAudio.pause();
+  } catch(e){}
+  try {
+    if ('mediaSession' in navigator){
+      navigator.mediaSession.playbackState = on ? 'playing' : 'paused';
+      if (on && st.chapters[st.ci]) navigator.mediaSession.metadata = new MediaMetadata({ title: st.chapters[st.ci].title, artist: st.title || '枕邊朗讀器' });
+    }
+  } catch(e){}
+}
+if ('mediaSession' in navigator){
+  try {
+    navigator.mediaSession.setActionHandler('pause', () => { if (st.playing) pause(); });
+    navigator.mediaSession.setActionHandler('play', () => { if (!st.playing) play(); });
+  } catch(e){}
+}
 function keepAwake(on){
+  playbackSession(on); // before speak(), inside the tap
   clearTimeout(awakeCheckT); awakeCheckT = setTimeout(showAwake, 1500);
   awakeVideo(on); // must run inside the tap, before any await
   (async () => {
@@ -687,12 +728,20 @@ function fillVoices(){
   });
   sel.value = (st.voiceURI && zh.some(v => v.voiceURI === st.voiceURI)) ? st.voiceURI : 'auto';
 }
+function applyMute(){ document.querySelectorAll('#muteSeg button').forEach(b => b.setAttribute('aria-pressed', (b.dataset.m === '1') === st.ignoreMute)); }
+$('#muteSeg').onclick = e => {
+  const b = e.target.closest('button'); if (!b) return;
+  st.ignoreMute = b.dataset.m === '1'; LS.set('ignoreMute', st.ignoreMute); applyMute();
+  if (st.playing) playbackSession(st.ignoreMute); else playbackSession(false);
+  toast(st.ignoreMute ? '靜音模式下也會朗讀' : '朗讀會跟隨靜音開關');
+};
 $('#voice').onchange = e => { st.voiceURI = e.target.value; st.forceAuto = false; LS.set('voice2', st.voiceURI); };
 // Test: spoken directly inside the tap, reports whether sound actually started
 $('#testVoice').onclick = () => {
   if (!synth){ $('#testMsg').textContent = '這個瀏覽器不支援語音朗讀。'; return; }
   if (st.playing) pause();
   if (synth.speaking || synth.pending) synth.cancel();
+  playbackSession(true); setTimeout(() => { if (!st.playing) playbackSession(false); }, 8000);
   const save = st.forceAuto; st.forceAuto = false;
   const u = makeUtt('這是試聽，聽得到就代表可以正常朗讀。');
   st.forceAuto = save;
@@ -893,7 +942,8 @@ $('#fScope').onclick = e => {
 (function boot(){
   const r = LS.get('rate'); if (r){ st.rate = r; $('#rate').value = r; $('#rateVal').textContent = (+r).toFixed(1); }
   Object.assign(look, LS.get('look') || {}); const oldFs = LS.get('fs'); if (oldFs && !LS.get('look')) look.fs = oldFs; applyLook();
-  st.voiceURI = LS.get('voice2') || 'auto';   // old 'voice' key ignored: a voice saved on iOS 18 may no longer exist
+  st.voiceURI = LS.get('voice2') || 'auto';
+  st.ignoreMute = LS.get('ignoreMute') !== false; applyMute();   // old 'voice' key ignored: a voice saved on iOS 18 may no longer exist
   if (LS.get('dockCollapsed')) setDock(true);
   const tm = LS.get('timer'); if (tm) setTimerMode(String(tm));
   const b = LS.get('book');
