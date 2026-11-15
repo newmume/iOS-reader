@@ -1,5 +1,5 @@
 // 枕邊朗讀器 offline cache. Bump VERSION after changing any file.
-const VERSION = 'reader-v12';
+const VERSION = 'reader-v13';
 const CORE = ['./', 'index.html', 'manifest.webmanifest', 'icon-180.png', 'icon-512.png'];
 const RUNTIME_HOSTS = ['fonts.googleapis.com', 'fonts.gstatic.com', 'cdnjs.cloudflare.com'];
 

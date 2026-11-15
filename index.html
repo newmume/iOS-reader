@@ -92,6 +92,11 @@ body.ssmode{height:auto}
 .ss h2:first-child{margin-top:0}
 .ss p{font-family:var(--f-read);font-size:var(--fs,19px);line-height:var(--lh,1.85);margin:0 0 .7em}
 .ss .ss-end{margin-top:40px;text-align:center;color:var(--muted);font-size:14px;display:grid;gap:12px;justify-items:center}
+.ssbar{position:fixed;left:0;right:0;bottom:0;z-index:15;background:var(--surface);border-top:1px solid var(--line);padding:6px 12px calc(8px + env(safe-area-inset-bottom,0px));display:grid;gap:5px}
+.ssbar-info{font-size:12px;color:var(--muted);text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ssbar-row{display:flex;gap:8px;width:100%;max-width:680px;margin:0 auto}
+.ssbar button{flex:1;min-width:0;border:1px solid var(--line);background:var(--bg);border-radius:10px;padding:10px 2px;font-size:14px;font-variant-numeric:tabular-nums;white-space:nowrap}
+.ssbar #ssBack{background:var(--accent);color:var(--accent-ink);border-color:var(--accent);font-weight:600}
 .dock.collapsed .full,.dock:not(.collapsed) .mini{display:none}
 .handle{justify-self:center;display:flex;flex-direction:column;align-items:center;gap:3px;background:none;border:0;padding:4px 24px 0;color:var(--muted);font-size:11px}
 .handle i{display:block;width:38px;height:5px;border-radius:3px;background:var(--line)}
@@ -222,7 +227,7 @@ body.ssmode{height:auto}
     <div class="row"><label>念到哪裡停</label>
       <div class="seg" id="ssRange"><button data-r="0">本章結束</button><button data-r="1">再多 1 章</button><button data-r="3">再多 3 章</button><button data-r="all">全書結束</button></div>
     </div>
-    <p class="hint" style="margin:0 0 14px">回到朗讀器：<b>雙擊畫面</b>，或捲到最底按「回到朗讀器」。會依畫面位置記住讀到哪一段。</p>
+    <p class="hint" style="margin:0 0 14px">畫面底部有控制列：返回、上一章、下一章、定時（目前：<b id="ssTimerInfo"></b>）。<b>雙擊任一段</b>可從那一段重新開始。換章節或段落後，請再啟動一次朗讀螢幕。</p>
     <button class="pill primary" id="ssStart" style="width:100%;padding:12px;font-size:16px">開始</button>
   </div>
 </div>
@@ -294,6 +299,10 @@ body.ssmode{height:auto}
 </div>
 
 <main class="ss" id="ssView" hidden></main>
+<div class="ssbar" id="ssBar" aria-hidden="true" hidden>
+  <div class="ssbar-info" id="ssBarInfo"></div>
+  <div class="ssbar-row"><button id="ssBack">返回</button><button id="ssPrev">上一章</button><button id="ssNext">下一章</button><button id="ssTimer">定時 不限</button></div>
+</div>
 
 <div class="dim" id="dim" hidden><div id="dimText">朗讀中<br>點一下螢幕回到控制畫面</div></div>
 <div class="toast" id="toast" hidden></div>
@@ -955,12 +964,16 @@ $('#editBtn').onclick = openEditor;
 /* ---------- Speak Screen mode ---------- */
 // iOS "Speak Screen" reads the page from the top and ignores the silent switch, unlike web speech.
 // So this view puts nothing on the page except the story, starting exactly at the chosen paragraph.
-function ssStartPos(){ return { ci: st.ci, pi: st.pi }; }
-function ssEndChapter(r){ return r === 'all' ? st.chapters.length - 1 : Math.min(st.chapters.length - 1, st.ci + (+r || 0)); }
+// The control bar is aria-hidden and comes after the story in the page, so Speak Screen doesn't read it.
+const ss = { from:null, blocks:[], anchor:null, rate:4.5, touchUntil:0, mode:'0', endAt:0, tick:null, scrollT:null, hintT:null };
+const SS_TIMES = ['0','15','30','45','60','90'];
+const ssLastChapter = fromCi => { const r = LS.get('ssRange') || '0'; return r === 'all' ? st.chapters.length - 1 : Math.min(st.chapters.length - 1, fromCi + (+r || 0)); };
+const ssMinutes = () => /^\d+$/.test(st.timer.mode) && st.timer.mode !== '0' ? st.timer.mode : '0';
 $('#ssBtn').onclick = () => {
   if (st.playing) pause();
   const ch = st.chapters[st.ci];
   $('#ssFrom').textContent = `「${ch.title}」` + (st.pi < 0 ? '的標題' : `第 ${st.pi + 1} 段`);
+  $('#ssTimerInfo').textContent = ssMinutes() === '0' ? '不限' : `${ssMinutes()} 分鐘，按開始後倒數`;
   const r = LS.get('ssRange') || '0';
   document.querySelectorAll('#ssRange button').forEach(b => b.setAttribute('aria-pressed', b.dataset.r === r));
   openSheet('#ssSheet');
@@ -970,52 +983,126 @@ $('#ssRange').onclick = e => {
   LS.set('ssRange', b.dataset.r);
   document.querySelectorAll('#ssRange button').forEach(x => x.setAttribute('aria-pressed', x === b));
 };
-let ssScrollT = null;
-function enterSpeakScreen(){
-  const r = LS.get('ssRange') || '0', from = ssStartPos(), last = ssEndChapter(r);
+function ssInfo(msg){
+  clearTimeout(ss.hintT);
+  const title = ss.from ? st.chapters[ss.from.ci].title : '';
+  $('#ssBarInfo').textContent = msg ? `${title}・${msg}` : title;
+  if (msg) ss.hintT = setTimeout(() => ssInfo(''), 6000);
+}
+// Put the story on the page starting at `from` (pi -1 = chapter title)
+function ssRender(from, msg){
+  ss.from = from; ss.anchor = null;
   const view = $('#ssView'); view.innerHTML = '';
-  const frag = document.createDocumentFragment();
+  const frag = document.createDocumentFragment(), last = ssLastChapter(from.ci);
   for (let ci = from.ci; ci <= last; ci++){
-    const c = st.chapters[ci];
-    const startPi = ci === from.ci ? from.pi : -1;
+    const c = st.chapters[ci], startPi = ci === from.ci ? from.pi : -1;
     if (startPi < 0){ const h = document.createElement('h2'); h.textContent = c.title; h.dataset.ci = ci; h.dataset.pi = -1; frag.appendChild(h); }
     for (let pi = Math.max(0, startPi); pi < c.paras.length; pi++){
       const p = document.createElement('p'); p.textContent = c.paras[pi]; p.dataset.ci = ci; p.dataset.pi = pi; frag.appendChild(p);
     }
   }
-  const end = document.createElement('div'); end.className = 'ss-end';
-  const endTxt = document.createElement('div'); endTxt.textContent = '（朗讀範圍到此結束）';
-  const back = document.createElement('button'); back.className = 'pill'; back.textContent = '回到朗讀器'; back.onclick = exitSpeakScreen;
-  end.append(endTxt, back); frag.appendChild(end);
+  const end = document.createElement('div'); end.className = 'ss-end'; end.textContent = '（朗讀範圍到此結束）'; frag.appendChild(end);
   view.appendChild(frag);
-  $('#ssSheet').hidden = true;
-  document.body.classList.add('ssmode'); view.hidden = false;
+  ss.blocks = [...view.querySelectorAll('[data-ci]')];
+  ss.ownScrollUntil = Date.now() + 600;   // the jump to the top below is ours, not Speak Screen's
   window.scrollTo(0, 0);
+  st.ci = from.ci; st.pi = from.pi; savePos();
+  ssInfo(msg || '');
+}
+function enterSpeakScreen(){
+  $('#ssSheet').hidden = true;
+  document.body.classList.add('ssmode'); $('#ssView').hidden = false; $('#ssBar').hidden = false;
+  ssRender({ ci: st.ci, pi: st.pi });
+  ssSetTimer(ssMinutes());
   window.addEventListener('scroll', ssOnScroll, { passive:true });
+  window.addEventListener('touchstart', ssOnTouch, { passive:true });
+  window.addEventListener('touchmove', ssOnTouch, { passive:true });
 }
-// Speak Screen scrolls the page as it reads; the first paragraph at the top of the screen is where we are
-function ssTopBlock(){
-  const blocks = $('#ssView').querySelectorAll('[data-ci]');
-  for (const b of blocks){ if (b.getBoundingClientRect().bottom > 60) return b; }
-  return null;
+/* Where is Speak Screen? It can't tell us, so we estimate. When the sentence being read leaves the
+   screen, iOS scrolls it to the middle; that scroll (not caused by a finger) is our anchor. Between
+   anchors the reading speed is measured, and position = anchor + time × speed. */
+function ssIdxAt(y){               // index of the last block starting at or above page position y
+  let lo = 0, hi = ss.blocks.length - 1, ans = 0;
+  while (lo <= hi){ const m = (lo + hi) >> 1; if (ss.blocks[m].offsetTop <= y){ ans = m; lo = m + 1; } else hi = m - 1; }
+  return ans;
 }
+function ssOnTouch(){ ss.touchUntil = Date.now() + 1500; }
 function ssOnScroll(){
-  clearTimeout(ssScrollT);
-  ssScrollT = setTimeout(() => { const b = ssTopBlock(); if (b){ st.ci = +b.dataset.ci; st.pi = +b.dataset.pi; savePos(); } }, 400);
+  if (Date.now() < (ss.ownScrollUntil || 0)) return;
+  const manual = Date.now() < ss.touchUntil;
+  clearTimeout(ss.scrollT);
+  ss.scrollT = setTimeout(() => {
+    if (!ss.blocks.length) return;
+    const idx = ssIdxAt(window.scrollY + window.innerHeight / 2), now = Date.now(), a = ss.anchor;
+    if (!manual && a && !a.manual && idx > a.idx){
+      let chars = 0; for (let i = a.idx; i < idx; i++) chars += ss.blocks[i].textContent.length;
+      const r = chars / ((now - a.t) / 1000);
+      if (r > 1.5 && r < 15) ss.rate = ss.rate * 0.5 + r * 0.5;
+    }
+    ss.anchor = { t: now, idx, manual };
+    const b = ssEstimate(); if (b){ st.ci = +b.dataset.ci; st.pi = +b.dataset.pi; savePos(); }
+  }, 300);
+}
+function ssEstimate(){
+  if (!ss.blocks.length) return null;
+  const a = ss.anchor;
+  if (!a) return ss.blocks[0];
+  if (a.manual) return ss.blocks[a.idx];          // scrolled by hand: take what is in the middle of the screen
+  let chars = (Date.now() - a.t) / 1000 * ss.rate, i = a.idx;
+  const lastVisible = ssIdxAt(window.scrollY + window.innerHeight - 1);
+  while (i < lastVisible && chars >= ss.blocks[i].textContent.length){ chars -= ss.blocks[i].textContent.length; i++; }
+  return ss.blocks[i];
+}
+// Timer: Speak Screen can't be stopped from a page, so when time is up the story is taken off the page
+function ssSetTimer(mode){
+  ss.mode = mode; ss.endAt = mode === '0' ? 0 : Date.now() + (+mode) * 60000;
+  clearInterval(ss.tick); if (ss.endAt) ss.tick = setInterval(ssTick, 1000);
+  ssTick();
+}
+function ssTick(){
+  const btn = $('#ssTimer');
+  if (!ss.endAt){ btn.textContent = '定時 不限'; return; }
+  const left = ss.endAt - Date.now();
+  if (left <= 0){ ssTimeUp(); return; }
+  btn.textContent = `定時 ${Math.floor(left / 60000)}:${String(Math.floor(left / 1000) % 60).padStart(2, '0')}`;
+}
+function ssTimeUp(){
+  const b = ssEstimate(); if (b){ st.ci = +b.dataset.ci; st.pi = +b.dataset.pi; savePos(); }
+  clearInterval(ss.tick); ss.endAt = 0; ss.blocks = [];
+  const view = $('#ssView'); view.innerHTML = '';
+  const note = document.createElement('div'); note.className = 'ss-end'; note.setAttribute('aria-hidden', 'true'); note.textContent = '定時結束，已停止。按下方「返回」回到朗讀器。';
+  view.appendChild(note);
+  $('#ssTimer').textContent = '定時 已結束';
 }
 function exitSpeakScreen(){
-  const b = ssTopBlock(); if (b){ st.ci = +b.dataset.ci; st.pi = +b.dataset.pi; }
-  window.removeEventListener('scroll', ssOnScroll);
-  document.body.classList.remove('ssmode'); $('#ssView').hidden = true; $('#ssView').innerHTML = '';
+  const b = ssEstimate(); if (b){ st.ci = +b.dataset.ci; st.pi = +b.dataset.pi; }
+  window.removeEventListener('scroll', ssOnScroll); window.removeEventListener('touchstart', ssOnTouch); window.removeEventListener('touchmove', ssOnTouch);
+  clearInterval(ss.tick); clearTimeout(ss.scrollT); clearTimeout(ss.hintT); ss.endAt = 0; ss.blocks = [];
+  document.body.classList.remove('ssmode'); $('#ssView').hidden = true; $('#ssBar').hidden = true; $('#ssView').innerHTML = '';
   window.scrollTo(0, 0);
   renderChapter(true);
 }
+function ssGoChapter(d){
+  const cur = ssEstimate(), ci = cur ? +cur.dataset.ci : st.ci, to = Math.max(0, Math.min(st.chapters.length - 1, ci + d));
+  ssRender({ ci: to, pi: -1 }, '請再啟動一次朗讀螢幕');
+}
 $('#ssStart').onclick = enterSpeakScreen;
-$('#ssView').addEventListener('dblclick', exitSpeakScreen);
-let ssLastTap = 0;
+$('#ssBack').onclick = exitSpeakScreen;
+$('#ssPrev').onclick = () => ssGoChapter(-1);
+$('#ssNext').onclick = () => ssGoChapter(1);
+$('#ssTimer').onclick = () => {
+  const next = SS_TIMES[(SS_TIMES.indexOf(ss.mode) + 1) % SS_TIMES.length];
+  ssSetTimer(next); setTimerMode(next);
+  ssInfo(next === '0' ? '定時已關閉' : `${next} 分鐘後停止`);
+};
+// Double-tap a paragraph: start again from that paragraph
+function ssRestartAt(el){ const b = el && el.closest('[data-ci]'); if (b) ssRender({ ci: +b.dataset.ci, pi: +b.dataset.pi }, '已從這一段開始，請再啟動一次朗讀螢幕'); }
+$('#ssView').addEventListener('dblclick', e => ssRestartAt(e.target));
+let ssLastTap = 0, ssLastEl = null;
 $('#ssView').addEventListener('touchend', e => {   // iOS double-tap
-  const now = Date.now();
-  if (now - ssLastTap < 300){ e.preventDefault(); exitSpeakScreen(); ssLastTap = 0; } else ssLastTap = now;
+  const now = Date.now(), el = e.target.closest ? e.target.closest('[data-ci]') : null;
+  if (el && el === ssLastEl && now - ssLastTap < 350){ e.preventDefault(); ssLastTap = 0; ssRestartAt(el); }
+  else { ssLastTap = now; ssLastEl = el; }
 });
 $('#edBack').onclick = () => { syncEd(); if (ed.dirty){ $('#edDiscard').hidden = false; return; } closeEditor(); };
 $('#edDiscardYes').onclick = closeEditor;
