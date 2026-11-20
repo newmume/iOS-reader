@@ -129,6 +129,11 @@ body.ssmode{height:auto}
 .list button .n{color:var(--muted);font-variant-numeric:tabular-nums;min-width:2.6em;font-size:13px;padding-top:2px}
 .list button .t{font-family:var(--f-read);font-size:16px;min-width:0}
 .list button.on .t{color:var(--accent);font-weight:700}
+.list button.vol{background:var(--soft);padding:10px 8px;border-bottom:1px solid var(--line)}
+.list button.vol .t{font-weight:700;font-size:15px;letter-spacing:.02em}
+.list button.sec{padding:8px 4px}
+.list button.sec .t{font-size:14px;color:var(--muted);padding-left:1.4em}
+.list button .t small{display:block;font-size:11px;color:var(--muted);font-family:var(--f-ui)}
 .row{display:grid;gap:6px;margin-bottom:16px}
 .row label{font-size:13px;color:var(--muted)}
 .row select{border:1px solid var(--line);background:var(--bg);border-radius:12px;padding:10px;font-size:16px}
@@ -350,6 +355,14 @@ function toParas(lines){
   return out;
 }
 const CH_RE = /^\s*(第\s*[\d０-９零〇一二三四五六七八九十百千兩]+\s*[章回節卷集部篇]|序章|序言|楔子|引子|尾聲|後記|番外|Chapter\s+\d+)/i;
+// Headings are sorted into three kinds. 章 (chapter) stays the reading unit; 卷 (volume) groups chapters in the
+// table of contents; 節 (section) is a jump point inside a chapter (its title stays in the text and is read aloud).
+const NUM_ZH = '[\\d０-９零〇一二三四五六七八九十百千兩]+';
+const VOL_RE = new RegExp(`^\\s*(第\\s*${NUM_ZH}\\s*[卷部集篇]|卷\\s*${NUM_ZH}|[上中下終]卷|卷[上中下終])`);
+const SEC_RE = new RegExp(`^\\s*第\\s*${NUM_ZH}\\s*節`);
+const kindOf = h => VOL_RE.test(h) ? 'vol' : SEC_RE.test(h) ? 'sec' : 'ch';
+// A plain line taken as a 卷/節 heading: short, and no full stop or quotes (so "第一節課開始了。" stays text)
+const plainHeading = t => t.length > 0 && t.length <= 40 && !/[。「」“”『』]/.test(t);
 
 function buildChapters(raw, pages){
   let t = raw.replace(/\r\n?/g,'\n');
@@ -359,23 +372,65 @@ function buildChapters(raw, pages){
   let title = '';
   const h1 = lines.find(l => /^#\s+\S/.test(l)); if (h1) title = cleanLine(h1);
 
-  // pick a heading rule
+  // Markdown headings: the most used level (seen at least twice) is the chapter level
   const counts = {};
   for (const l of lines){ const m = l.match(/^(#{1,6})\s+\S/); if (m) counts[m[1].length] = (counts[m[1].length]||0) + 1; }
   const lv = Object.keys(counts).map(Number).filter(k => counts[k] >= 2).sort((a,b) => counts[b]-counts[a] || a-b)[0];
-  let isHead = null;
-  if (lv) isHead = l => { const m = l.match(/^(#{1,6})\s+(.*)$/); return m && m[1].length <= lv ? cleanLine(m[2]) : null; };
-  else if (lines.filter(l => l.trim().length <= 40 && CH_RE.test(l)).length >= 2) isHead = l => (l.trim().length <= 40 && CH_RE.test(l)) ? l.trim() : null;
+
+  // Find heading lines and their kind
+  const heads = new Map();   // line index -> { text, kind }
+  if (lv){
+    let firstMd = true;
+    lines.forEach((l, i) => {
+      const m = l.match(/^(#{1,6})\s+(.*)$/);
+      if (m){
+        const text = cleanLine(m[2]), level = m[1].length, k = kindOf(text);
+        let kind;
+        let front = false;
+        if (level < lv){ front = firstMd && k !== 'vol'; kind = front ? 'ch' : 'vol'; }   // the book's own title on top opens the front matter
+        else if (level === lv) kind = k;
+        else kind = k === 'vol' ? 'vol' : 'sec';
+        heads.set(i, { text, kind, front }); firstMd = false;
+      } else {
+        const tt = l.trim();
+        if (plainHeading(tt) && kindOf(tt) !== 'ch') heads.set(i, { text: tt, kind: kindOf(tt) });   // a plain 卷/節 line among Markdown chapters
+      }
+    });
+  } else {
+    lines.forEach((l, i) => {
+      const tt = l.trim();
+      if (tt.length > 40 || !CH_RE.test(tt)) return;
+      const k = kindOf(tt);
+      if (k !== 'ch' && !plainHeading(tt)) return;
+      heads.set(i, { text: tt, kind: k });
+    });
+    if (heads.size < 2) heads.clear();
+  }
+  // A book with no 章 at all: its 節 (or else its 卷) are the chapters
+  const hs = [...heads.values()];
+  if (hs.length && !hs.some(h => h.kind === 'ch' && !h.front)){
+    const promote = hs.some(h => h.kind === 'sec') ? 'sec' : 'vol';
+    hs.forEach(h => { if (h.kind === promote) h.kind = 'ch'; });
+  }
 
   let chapters = [];
-  if (isHead){
-    let cur = { title:'開頭', lines:[] };
-    for (const l of lines){
-      const h = isHead(l);
-      if (h !== null){ chapters.push(cur); cur = { title:h, lines:[] }; } else cur.lines.push(l);
-    }
+  if (heads.size){
+    let cur = { title:'開頭', paras:[], secs:[], vol:null }, curVol = null;
+    lines.forEach((l, i) => {
+      const h = heads.get(i);
+      if (!h){ const c = cleanLine(l); if (c) cur.paras.push(...splitLong(c)); return; }
+      if (h.kind === 'vol'){ chapters.push(cur); curVol = h.text; cur = { title:h.text, paras:[], secs:[], vol:curVol, isVol:true }; }
+      else if (h.kind === 'ch'){ chapters.push(cur); cur = { title:h.text, paras:[], secs:[], vol:curVol }; }
+      else { cur.secs.push({ title:h.text, pi:cur.paras.length }); cur.paras.push(...splitLong(h.text)); }
+    });
     chapters.push(cur);
-    chapters = chapters.map(c => ({ title:c.title, paras:toParas(c.lines) })).filter(c => c.paras.length);
+    chapters = chapters.filter(c => c.paras.length).map(c => {
+      const o = { title:c.title, paras:c.paras };
+      if (c.vol) o.vol = c.vol;
+      if (c.isVol) o.isVol = true;
+      if (c.secs.length) o.secs = c.secs;
+      return o;
+    });
   } else if (pages && pages.length){
     chapters = pages.map((p,i) => ({ title:`第 ${i+1} 頁`, paras:toParas(p.split('\n')) })).filter(c => c.paras.length);
   } else {
@@ -738,19 +793,34 @@ function renderList(q){
   q = (q || '').trim();
   const list = $('#chList'); list.innerHTML = '';
   const num = /^\d+$/.test(q) ? +q : null;
+  // Rows in reading order: a 卷 heads its chapters, each chapter is followed by its 節
+  const rows = []; let prevVol = null, nVol = 0, nSec = 0, nCh = 0;
+  st.chapters.forEach((c, i) => {
+    if (c.vol && c.vol !== prevVol){ rows.push({ type:'vol', label:c.vol, ci:i, pi:-1 }); nVol++; }
+    prevVol = c.vol || null;
+    if (!c.isVol){ rows.push({ type:'ch', label:c.title, ci:i, pi:-1 }); nCh++; }
+    (c.secs || []).forEach(sc => { rows.push({ type:'sec', label:sc.title, ci:i, pi:sc.pi, ctx:c.title }); nSec++; });
+  });
+  const anyTitle = q && rows.some(r => r.label.includes(q));
   const frag = document.createDocumentFragment();
   let first = null;
-  const anyTitle = q && st.chapters.some(c => c.title.includes(q));
-  st.chapters.forEach((c,i) => {
-    if (q && !(anyTitle ? c.title.includes(q) : num === i + 1)) return;
-    const b = document.createElement('button'); b.className = i === st.ci ? 'on' : '';
-    const own = /^\s*(\d|第)/.test(c.title);
-    b.innerHTML = `<span class="n">${own ? '' : i+1}</span><span class="t"></span>`; b.querySelector('.t').textContent = c.title;
-    b.onclick = () => { $('#chSheet').hidden = true; jump(i, -1); };
+  rows.forEach(r => {
+    if (q && !(anyTitle ? r.label.includes(q) : (r.type === 'ch' && num === r.ci + 1))) return;
+    const b = document.createElement('button'); b.className = r.type;
+    if (r.type === 'ch' && r.ci === st.ci) b.classList.add('on');
+    if (r.type === 'vol'){
+      b.innerHTML = '<span class="t"></span>';
+    } else {
+      const own = r.type === 'sec' || /^\s*(\d|第)/.test(r.label);
+      b.innerHTML = `<span class="n">${own ? '' : r.ci + 1}</span><span class="t"></span>`;
+    }
+    b.querySelector('.t').textContent = r.label;
+    if (q && r.type === 'sec'){ const cx = document.createElement('small'); cx.textContent = r.ctx; b.querySelector('.t').prepend(cx); }   // which chapter a found 節 is in
+    b.onclick = () => { $('#chSheet').hidden = true; jump(r.ci, r.pi); };
     frag.appendChild(b); if (!first) first = b;
   });
   list.appendChild(frag);
-  $('#chCount').textContent = `目錄・${st.chapters.length} 章`;
+  $('#chCount').textContent = `目錄・${nCh} 章` + (nVol ? `・${nVol} 卷` : '') + (nSec ? `・${nSec} 節` : '');
   return first;
 }
 $('#chBtn').onclick = () => { $('#chSearch').value = ''; renderList(''); openSheet('#chSheet'); const on = $('#chList .on'); if (on) on.scrollIntoView({ block:'center' }); };
@@ -872,6 +942,11 @@ function saveEditor(){
     changed++;
     c.title = d.title.trim() || o.title;
     c.paras = textToParas(d.text); if (!c.paras.length) c.paras = ['（本章沒有內容）'];
+    if (c.secs){   // find each 節 title again in the edited text, in order
+      let from = 0;
+      c.secs = c.secs.map(sc => { const k = c.paras.indexOf(sc.title, from); if (k < 0) return null; from = k + 1; return { title:sc.title, pi:k }; }).filter(Boolean);
+      if (!c.secs.length) delete c.secs;
+    }
     d.title = c.title; d.text = chText(c);
     o.title = d.title; o.text = d.text;
   });
@@ -950,7 +1025,16 @@ function replaceAll(){
 }
 async function exportMd(){
   if (ed.dirty){ toast('請先按「儲存」，再匯出'); return; }
-  const md = `# ${st.title}\n\n` + st.chapters.map(c => `## ${c.title}\n\n${chText(c)}`).join('\n\n') + '\n';
+  // # book, ## 卷, ### 章, #### 節 when there are 卷; otherwise # book, ## 章, ### 節
+  const hasVol = st.chapters.some(c => c.vol), H = hasVol ? '###' : '##', HS = hasVol ? '####' : '###';
+  let md = `# ${st.title}\n\n`, prevVol = null;
+  for (const c of st.chapters){
+    if (c.vol && c.vol !== prevVol) md += `## ${c.vol}\n\n`;
+    prevVol = c.vol || null;
+    const at = new Set((c.secs || []).map(sc => sc.pi));
+    const body = c.paras.map((t, k) => at.has(k) ? `${HS} ${t}` : t).join('\n\n');
+    md += (c.isVol ? '' : `${H} ${c.title}\n\n`) + body + '\n\n';
+  }
   const name = (st.file || st.title || '文件').replace(/\.[^.]+$/, '') + '.md';
   const f = new File([md], name, { type:'text/plain' });
   try { if (navigator.canShare && navigator.canShare({ files:[f] })){ await navigator.share({ files:[f], title:name }); return; } }
